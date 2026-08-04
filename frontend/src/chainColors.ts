@@ -21,3 +21,20 @@ export function chainColorStyle(chainKey: string): CSSProperties {
     "--chain-secondary": colors.secondary,
   } as CSSProperties;
 }
+
+// Fixed display order for whenever multiple chain badges/chips render next
+// to each other (filter chips, "Kjede" cell, cart store lists, etc.).
+// Deliberately a stable constant rather than "whatever order this particular
+// array arrived in" (price order, DB scan order, Set insertion order, ...) —
+// those vary per row/response and read as visually random when several
+// badges sit side by side.
+const CHAIN_ORDER = ["joker", "meny", "spar"];
+
+function chainSortIndex(chainKey: string): number {
+  const idx = CHAIN_ORDER.indexOf(chainKey);
+  return idx === -1 ? CHAIN_ORDER.length : idx;
+}
+
+export function sortByChainOrder<T>(items: T[], getChainKey: (item: T) => string): T[] {
+  return [...items].sort((a, b) => chainSortIndex(getChainKey(a)) - chainSortIndex(getChainKey(b)));
+}

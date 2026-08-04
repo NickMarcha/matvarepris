@@ -1,23 +1,23 @@
 import { useEffect, useState } from "react";
-import { fetchCategories, fetchChains, fetchIngestStatus, fetchProducts, triggerIngest } from "./api";
+import { fetchCategories, fetchChains, fetchGroupedProducts, fetchIngestStatus, triggerIngest } from "./api";
 import { useCart } from "./CartContext";
 import { filtersToParams, paramsToFilters } from "./filterParams";
 import { loadSettings, type AppSettings } from "./settings";
 import { FilterBar } from "./components/FilterBar";
-import { ProductTable } from "./components/ProductTable";
+import { GroupedProductTable } from "./components/GroupedProductTable";
 import { HistoryModal } from "./components/HistoryModal";
 import { CartDrawer } from "./components/CartDrawer";
-import type { Category, Chain, Filters, Product, SortKey } from "./types";
+import type { Category, Chain, Filters, ProductGroup, SortKey } from "./types";
 
 export default function App() {
   const [filters, setFilters] = useState<Filters>(() => paramsToFilters(new URLSearchParams(window.location.search)));
   const [chains, setChains] = useState<Chain[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
+  const [groups, setGroups] = useState<ProductGroup[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Product | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<ProductGroup | null>(null);
   const [ingestRunning, setIngestRunning] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   const [showNutritionColumns, setShowNutritionColumns] = useState(false);
@@ -26,7 +26,7 @@ export default function App() {
   // the already-rendered list has no way to know about otherwise.
   const [refreshKey, setRefreshKey] = useState(0);
   const [settings] = useState<AppSettings>(() => loadSettings());
-  const { addItem, totalCount, totalPrice } = useCart();
+  const { addItem, totalCount } = useCart();
 
   const allChainKeys = chains.map((c) => c.key);
 
@@ -44,9 +44,9 @@ export default function App() {
   useEffect(() => {
     const handle = setTimeout(() => {
       setLoading(true);
-      fetchProducts(filters, settings, allChainKeys)
+      fetchGroupedProducts(filters, settings, allChainKeys)
         .then((res) => {
-          setProducts(res.items);
+          setGroups(res.items);
           setTotal(res.total);
           setError(null);
         })
@@ -126,9 +126,7 @@ export default function App() {
           <button onClick={handleRefresh} disabled={ingestRunning}>
             {ingestRunning ? "Oppdaterer…" : "Oppdater nå"}
           </button>
-          <button onClick={() => setCartOpen(true)}>
-            Handlekurv ({totalCount}) — {totalPrice.toFixed(2)} kr
-          </button>
+          <button onClick={() => setCartOpen(true)}>Handlekurv ({totalCount})</button>
           <a className="back-link" href="/settings">
             Innstillinger →
           </a>
@@ -148,7 +146,7 @@ export default function App() {
       />
 
       <div className="results-meta">
-        <span>{total.toLocaleString("no-NO")} produkter</span>
+        <span>{total.toLocaleString("no-NO")} produkter (på tvers av butikker)</span>
         <label className="checkbox-group">
           <input
             type="checkbox"
@@ -164,17 +162,17 @@ export default function App() {
 
       {loading && <div className="loading-state">Laster…</div>}
       {error && <div className="empty-state">Feil: {error}</div>}
-      {!loading && !error && products.length === 0 && (
+      {!loading && !error && groups.length === 0 && (
         <div className="empty-state">Ingen produkter matcher filtrene dine.</div>
       )}
 
-      {!loading && !error && products.length > 0 && (
-        <ProductTable
-          items={products}
+      {!loading && !error && groups.length > 0 && (
+        <GroupedProductTable
+          groups={groups}
           sort={filters.sort}
           order={filters.order}
           onSortChange={handleSortChange}
-          onSelect={setSelected}
+          onSelect={setSelectedGroup}
           onAddToCart={addItem}
           showNutritionColumns={showNutritionColumns}
         />
@@ -192,16 +190,18 @@ export default function App() {
         </button>
       </div>
 
-      {selected && (
+      {selectedGroup && (
         <HistoryModal
-          productId={selected.id}
+          group={selectedGroup}
           onClose={() => {
-            setSelected(null);
+            setSelectedGroup(null);
             setRefreshKey((k) => k + 1);
           }}
         />
       )}
-      {cartOpen && <CartDrawer onClose={() => setCartOpen(false)} />}
+      {cartOpen && (
+        <CartDrawer onClose={() => setCartOpen(false)} chains={chains} hiddenChains={settings.hiddenChains} />
+      )}
     </div>
   );
 }

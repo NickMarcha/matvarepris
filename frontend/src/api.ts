@@ -1,10 +1,11 @@
 import type {
+  CartPricingResponse,
   Category,
   Chain,
+  EanHistoryResponse,
   Filters,
+  GroupedProductsResponse,
   ProductDetail,
-  ProductHistoryResponse,
-  ProductsResponse,
   Stats,
 } from "./types";
 import type { AppSettings } from "./settings";
@@ -25,11 +26,7 @@ function resolveEffectiveChains(sessionChains: string[], hiddenChains: string[],
   return base.filter((c) => !hiddenChains.includes(c));
 }
 
-export async function fetchProducts(
-  filters: Filters,
-  settings: AppSettings,
-  allChainKeys: string[] = [],
-): Promise<ProductsResponse> {
+function buildProductParams(filters: Filters, settings: AppSettings, allChainKeys: string[]): URLSearchParams {
   const params = filtersToApiParams(filters);
 
   const effectiveChains = resolveEffectiveChains(filters.chains, settings.hiddenChains, allChainKeys);
@@ -50,7 +47,16 @@ export async function fetchProducts(
     }
   }
 
-  const res = await fetch(`${API_URL}/api/products?${params.toString()}`);
+  return params;
+}
+
+export async function fetchGroupedProducts(
+  filters: Filters,
+  settings: AppSettings,
+  allChainKeys: string[] = [],
+): Promise<GroupedProductsResponse> {
+  const params = buildProductParams(filters, settings, allChainKeys);
+  const res = await fetch(`${API_URL}/api/products/grouped?${params.toString()}`);
   if (!res.ok) throw new Error(`Failed to fetch products: ${res.status}`);
   return res.json();
 }
@@ -74,9 +80,21 @@ export async function fetchChains(): Promise<Chain[]> {
   return res.json();
 }
 
-export async function fetchProductHistory(id: number): Promise<ProductHistoryResponse> {
-  const res = await fetch(`${API_URL}/api/products/${id}/history`);
+export async function fetchEanHistory(ean: string, chains?: string[]): Promise<EanHistoryResponse> {
+  const params = new URLSearchParams();
+  if (chains && chains.length > 0) params.set("chain", chains.join(","));
+  const res = await fetch(`${API_URL}/api/products/by-ean/${encodeURIComponent(ean)}/history?${params.toString()}`);
   if (!res.ok) throw new Error(`Failed to fetch history: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchCartPricing(eans: string[], chains?: string[]): Promise<CartPricingResponse> {
+  if (eans.length === 0) return { items: {} };
+  const params = new URLSearchParams();
+  params.set("eans", eans.join(","));
+  if (chains && chains.length > 0) params.set("chain", chains.join(","));
+  const res = await fetch(`${API_URL}/api/products/cart-pricing?${params.toString()}`);
+  if (!res.ok) throw new Error(`Failed to fetch cart pricing: ${res.status}`);
   return res.json();
 }
 

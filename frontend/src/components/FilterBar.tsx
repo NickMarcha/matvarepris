@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { Category, Chain, Filters } from "../types";
 import { NutritionFilters } from "./NutritionFilters";
 import { CategoryFilters } from "./CategoryFilters";
-import { chainColorStyle } from "../chainColors";
+import { chainColorStyle, sortByChainOrder } from "../chainColors";
 
 interface FilterBarProps {
   filters: Filters;
@@ -51,7 +51,10 @@ function countActiveExpandedFilters(filters: Filters): number {
 export function FilterBar({ filters, chains, categories, hiddenCategories, hiddenChains, onChange }: FilterBarProps) {
   const [expanded, setExpanded] = useState(false);
   const activeCount = countActiveExpandedFilters(filters);
-  const visibleChains = chains.filter((c) => !hiddenChains.includes(c.key));
+  const visibleChains = sortByChainOrder(
+    chains.filter((c) => !hiddenChains.includes(c.key)),
+    (c) => c.key,
+  );
 
   function toggleChain(key: string) {
     const has = filters.chains.includes(key);

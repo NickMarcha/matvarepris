@@ -1,23 +1,33 @@
 import { useEffect, useState } from "react";
-import { fetchProductHistory } from "../api";
+import { fetchEanHistory } from "../api";
 import { useCart } from "../CartContext";
-import type { ProductHistoryResponse } from "../types";
-import { LineChart } from "./LineChart";
+import { CHAIN_COLORS, chainColorStyle } from "../chainColors";
+import type { EanHistoryResponse, ProductGroup } from "../types";
+import { LineChart, type ChartSeries } from "./LineChart";
 import { ProductDetailSection } from "./ProductDetailSection";
 
 interface HistoryModalProps {
-  productId: number;
+  group: ProductGroup;
   onClose: () => void;
 }
 
-export function HistoryModal({ productId, onClose }: HistoryModalProps) {
-  const [data, setData] = useState<ProductHistoryResponse | null>(null);
+export function HistoryModal({ group, onClose }: HistoryModalProps) {
+  const [data, setData] = useState<EanHistoryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { addItem } = useCart();
 
   useEffect(() => {
     let cancelled = false;
-    fetchProductHistory(productId)
+    setData(null);
+    setError(null);
+    // Scope history to the same chains already shown in the accordion
+    // (group.members) rather than re-deriving "visible chains" separately —
+    // these are exactly the stores the user is currently seeing this
+    // product from.
+    fetchEanHistory(
+      group.ean,
+      group.members.map((m) => m.chain),
+    )
       .then((res) => {
         if (!cancelled) setData(res);
       })
@@ -27,66 +37,76 @@ export function HistoryModal({ productId, onClose }: HistoryModalProps) {
     return () => {
       cancelled = true;
     };
-  }, [productId]);
+  }, [group.ean, group.members]);
 
-  const pricePoints =
-    data?.history
-      .filter((h) => h.price !== null)
-      .map((h) => ({ x: new Date(h.changedAt), y: h.price as number })) ?? [];
+  function buildSeries(pick: (points: EanHistoryResponse["chains"][number]["points"][number]) => number | null): ChartSeries[] {
+    if (!data) return [];
+    return data.chains.map((c) => ({
+      label: c.chain,
+      color: CHAIN_COLORS[c.chain]?.primary ?? "gray",
+      points: c.points
+        .map((p) => ({ x: new Date(p.changedAt), y: pick(p) }))
+        .filter((p): p is { x: Date; y: number } => p.y !== null),
+    }));
+  }
 
-  const unitPricePoints =
-    data?.history
-      .filter((h) => h.comparePricePerUnit !== null)
-      .map((h) => ({ x: new Date(h.changedAt), y: h.comparePricePerUnit as number })) ?? [];
+  const pricePoints = buildSeries((p) => p.price);
+  const unitPricePoints = buildSeries((p) => p.comparePricePerUnit);
+  const anyCompareUnit = data?.chains.find((c) => c.compareUnit)?.compareUnit ?? null;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div>
-            <h2>{data?.product.title ?? "Loading…"}</h2>
-            {data?.product.subtitle && <div className="product-subtitle">{data.product.subtitle}</div>}
-            {data?.product.productUrl && (
-              <a
-                className="external-link-text"
-                href={data.product.productUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Åpne hos {data.product.chain} ↗
-              </a>
-            )}
+            <h2>{group.members[0].title}</h2>
+            {group.hasDataMismatch && <div className="mismatch-note">⚠ {group.mismatchNote}</div>}
           </div>
-          <button onClick={onClose}>Close</button>
+          <button onClick={onClose}>Lukk</button>
         </div>
 
-        {data && (
-          <button className="add-to-cart-button" onClick={() => addItem(data.product)}>
-            + Legg i handlekurv
-          </button>
-        )}
+        <button className="add-to-cart-button" onClick={() => addItem(group)}>
+          + Legg i handlekurv
+        </button>
 
-        {error && <div className="empty-state">Failed to load history: {error}</div>}
+        <div className="store-price-list">
+          {group.members.map((m) => (
+            <div key={`${m.chain}-${m.id}`} className="store-price-row">
+              <span className="chain-badge" style={chainColorStyle(m.chain)}>
+                {m.chain}
+              </span>
+              <div className="store-price-info">
+                <div className="product-subtitle">{m.subtitle}</div>
+                <div className="price-main">{m.price !== null ? `${m.price.toFixed(2)} kr` : "—"}</div>
+              </div>
+              {m.productUrl && (
+                <a
+                  className="external-link-text"
+                  href={m.productUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Åpne hos {m.chain} ↗
+                </a>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {error && <div className="empty-state">Klarte ikke å hente prishistorikk: {error}</div>}
+
+        <ProductDetailSection productId={group.representative.id} ean={group.representative.ean} />
 
         {data && (
           <>
-            <ProductDetailSection productId={data.product.id} ean={data.product.ean} />
+            <div className="chart-title">Pris over tid (kr)</div>
+            <LineChart series={pricePoints} unitLabel="kr" />
 
-            <div className="chart-title">Price over time (kr)</div>
-            <LineChart points={pricePoints} color="var(--series-price)" unitLabel="kr" />
-
-            {data.product.compareUnit && (
+            {anyCompareUnit && (
               <>
-                <div className="chart-title">Unit price over time (kr/{data.product.compareUnit})</div>
-                <LineChart points={unitPricePoints} color="var(--series-unit)" unitLabel={`kr/${data.product.compareUnit}`} />
+                <div className="chart-title">Enhetspris over tid (kr/{anyCompareUnit})</div>
+                <LineChart series={unitPricePoints} unitLabel={`kr/${anyCompareUnit}`} />
               </>
-            )}
-
-            {data.history.length === 0 && (
-              <div className="loading-state">
-                No price changes recorded yet for this product — it will show a history after the catalog is
-                refreshed a few times and the price actually changes.
-              </div>
             )}
           </>
         )}

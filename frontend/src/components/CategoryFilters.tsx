@@ -1,5 +1,5 @@
 import type { Category, CategoryMode, Chain, Filters } from "../types";
-import { chainColorStyle } from "../chainColors";
+import { chainColorStyle, sortByChainOrder } from "../chainColors";
 
 interface CategoryFiltersProps {
   filters: Filters;
@@ -31,10 +31,11 @@ export function CategoryFilters({ filters, categories, chains, hiddenCategories,
     else byChain.set(c.chain, [c]);
   }
 
-  // Chain registry order first (matches the store chips elsewhere), then any
-  // leftover chain key categories.ts might return that isn't in `chains` yet.
-  const chainOrder = [...chains.map((c) => c.key), ...byChain.keys()].filter(
-    (key, i, arr) => byChain.has(key) && arr.indexOf(key) === i,
+  // Fixed chain order (matches the store chips elsewhere), not whatever
+  // order chains.ts/categories.ts happened to return.
+  const chainOrder = sortByChainOrder(
+    [...chains.map((c) => c.key), ...byChain.keys()].filter((key, i, arr) => byChain.has(key) && arr.indexOf(key) === i),
+    (key) => key,
   );
 
   function displayName(key: string): string {

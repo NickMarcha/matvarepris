@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { fetchCategories, fetchChains } from "./api";
 import { loadSettings, saveSettings, type AppSettings } from "./settings";
 import type { Category, Chain } from "./types";
-import { chainColorStyle } from "./chainColors";
+import { chainColorStyle, sortByChainOrder } from "./chainColors";
 
 export default function SettingsPage() {
   const [categories, setCategories] = useState<Category[]>([]);
@@ -53,8 +53,9 @@ export default function SettingsPage() {
     if (list) list.push(c);
     else byChain.set(c.chain, [c]);
   }
-  const chainOrder = [...chains.map((c) => c.key), ...byChain.keys()].filter(
-    (key, i, arr) => byChain.has(key) && arr.indexOf(key) === i,
+  const chainOrder = sortByChainOrder(
+    [...chains.map((c) => c.key), ...byChain.keys()].filter((key, i, arr) => byChain.has(key) && arr.indexOf(key) === i),
+    (key) => key,
   );
   function chainDisplayName(key: string): string {
     return chains.find((c) => c.key === key)?.displayName ?? key;
@@ -90,7 +91,7 @@ export default function SettingsPage() {
           )}
         </div>
         <div className="toggle-chip-grid">
-          {chains.map((c) => {
+          {sortByChainOrder(chains, (c) => c.key).map((c) => {
             const hidden = settings.hiddenChains.includes(c.key);
             return (
               <div

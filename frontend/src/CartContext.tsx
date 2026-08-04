@@ -1,17 +1,15 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import type { CartItem, Product } from "./types";
+import type { CartItem, ProductGroup } from "./types";
 
 const STORAGE_KEY = "matvarepris_cart";
 
 interface CartContextValue {
   items: CartItem[];
-  addItem: (product: Product) => void;
-  removeItem: (productId: number) => void;
-  setQuantity: (productId: number, quantity: number) => void;
+  addItem: (group: ProductGroup) => void;
+  removeItem: (ean: string) => void;
+  setQuantity: (ean: string, quantity: number) => void;
   clear: () => void;
   totalCount: number;
-  totalPrice: number;
-  subtotalsByChain: { chain: string; total: number; count: number }[];
 }
 
 const CartContext = createContext<CartContextValue | null>(null);
@@ -32,39 +30,36 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
   }, [items]);
 
-  function addItem(product: Product) {
+  function addItem(group: ProductGroup) {
     setItems((prev) => {
-      const existing = prev.find((i) => i.productId === product.id);
+      const existing = prev.find((i) => i.ean === group.ean);
       if (existing) {
-        return prev.map((i) => (i.productId === product.id ? { ...i, quantity: i.quantity + 1 } : i));
+        return prev.map((i) => (i.ean === group.ean ? { ...i, quantity: i.quantity + 1 } : i));
       }
+      // Cheapest member as the display headline — same convention
+      // GroupedProductTable already uses for a merged product's title/image.
+      const headline = group.members[0];
       const newItem: CartItem = {
-        productId: product.id,
-        chain: product.chain,
-        ean: product.ean,
-        title: product.title,
-        subtitle: product.subtitle,
-        price: product.price,
-        compareUnit: product.compareUnit,
-        comparePricePerUnit: product.comparePricePerUnit,
-        imageUrl: product.imageUrl,
-        productUrl: product.productUrl,
+        ean: group.ean,
+        title: headline.title,
+        subtitle: headline.subtitle,
+        imageUrl: headline.imageUrl,
         quantity: 1,
       };
       return [...prev, newItem];
     });
   }
 
-  function removeItem(productId: number) {
-    setItems((prev) => prev.filter((i) => i.productId !== productId));
+  function removeItem(ean: string) {
+    setItems((prev) => prev.filter((i) => i.ean !== ean));
   }
 
-  function setQuantity(productId: number, quantity: number) {
+  function setQuantity(ean: string, quantity: number) {
     if (quantity <= 0) {
-      removeItem(productId);
+      removeItem(ean);
       return;
     }
-    setItems((prev) => prev.map((i) => (i.productId === productId ? { ...i, quantity } : i)));
+    setItems((prev) => prev.map((i) => (i.ean === ean ? { ...i, quantity } : i)));
   }
 
   function clear() {
@@ -72,25 +67,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   }
 
   const totalCount = useMemo(() => items.reduce((sum, i) => sum + i.quantity, 0), [items]);
-  const totalPrice = useMemo(
-    () => items.reduce((sum, i) => sum + (i.price ?? 0) * i.quantity, 0),
-    [items],
-  );
-  const subtotalsByChain = useMemo(() => {
-    const map = new Map<string, { total: number; count: number }>();
-    for (const i of items) {
-      const entry = map.get(i.chain) ?? { total: 0, count: 0 };
-      entry.total += (i.price ?? 0) * i.quantity;
-      entry.count += i.quantity;
-      map.set(i.chain, entry);
-    }
-    return Array.from(map.entries()).map(([chain, v]) => ({ chain, ...v }));
-  }, [items]);
 
   return (
-    <CartContext.Provider
-      value={{ items, addItem, removeItem, setQuantity, clear, totalCount, totalPrice, subtotalsByChain }}
-    >
+    <CartContext.Provider value={{ items, addItem, removeItem, setQuantity, clear, totalCount }}>
       {children}
     </CartContext.Provider>
   );

@@ -61,6 +61,30 @@ export interface ProductsResponse {
   items: Product[];
 }
 
+// One entry per EAN (barcode) instead of one per (chain, ean) row — same
+// physical product shown once with a per-store price/stock breakdown.
+export interface ProductGroup {
+  ean: string;
+  memberCount: number;
+  cheapestPrice: number | null;
+  cheapestUnitPrice: number | null;
+  bestDiscountAmount: number | null;
+  bestDiscountPercent: number | null;
+  anyOnOffer: boolean;
+  anyInStock: boolean;
+  hasDataMismatch: boolean; // crawled stores disagree on nutrition/allergens
+  mismatchNote: string | null; // human-readable summary for a tooltip
+  representative: Product; // only .nutrition/.containsAllergens/.dietFlags/.dietParseStatus consumed
+  members: Product[]; // cheapest-first
+}
+
+export interface GroupedProductsResponse {
+  total: number; // number of groups, not raw rows
+  page: number;
+  pageSize: number;
+  items: ProductGroup[];
+}
+
 export interface Category {
   name: string;
   chain: string;
@@ -119,6 +143,20 @@ export interface PriceHistoryPoint {
 export interface ProductHistoryResponse {
   product: Product;
   history: PriceHistoryPoint[];
+}
+
+export interface ChainHistorySeries {
+  chain: string;
+  productId: number;
+  title: string;
+  subtitle: string | null;
+  compareUnit: string | null;
+  points: PriceHistoryPoint[];
+}
+
+export interface EanHistoryResponse {
+  ean: string;
+  chains: ChainHistorySeries[];
 }
 
 export interface Allergen {
@@ -214,16 +252,28 @@ export interface Filters {
   pageSize: number;
 }
 
+// Keyed by EAN, not by a specific store's row — a cart entry represents the
+// physical product, not any one store's listing of it. Live pricing per
+// store is fetched separately (see CartPricingResponse) so totals always
+// reflect the latest data instead of a stale snapshot from add-time.
 export interface CartItem {
-  productId: number;
-  chain: string;
   ean: string;
   title: string;
   subtitle: string | null;
-  price: number | null;
-  compareUnit: string | null;
-  comparePricePerUnit: number | null;
   imageUrl: string | null;
-  productUrl: string | null;
   quantity: number;
+}
+
+export interface CartPricingEntry {
+  chain: string;
+  price: number | null;
+  compareUnitPrice: number | null;
+  compareUnit: string | null;
+  isOutOfStock: boolean;
+  isForSale: boolean;
+  productUrl: string | null;
+}
+
+export interface CartPricingResponse {
+  items: Record<string, CartPricingEntry[]>;
 }

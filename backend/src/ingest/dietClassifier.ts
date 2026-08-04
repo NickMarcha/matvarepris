@@ -133,15 +133,19 @@ const NEGATION_MARKERS = [
 ];
 
 // Norwegian "-fri"/"-frie" ("-free") fuses directly onto the preceding word
-// with no space ("kjøttfri", "svinefri", "glutenfri") so a plain \bfri\b
-// word-boundary check misses it — the boundary we actually want is "fri(e)
-// as a suffix", i.e. followed by whitespace or end-of-string, regardless of
-// what precedes it. Deliberately not anchored on the left so "kjøttfri" (no
-// trailing word) and "kjøttfri farse" (trailing word) both match, while
-// unrelated words like "frityr"/"frisk" don't (nothing after "fri" is a
-// space or end-of-string there).
-function tokenEndsWithFri(token: string): boolean {
-  return /fri(e)?(\s|$)/.test(token);
+// with no space ("kjøttfri", "svinefri", "glutenfri"), optionally with a
+// linking "e" ("svin" + "e" + "fri" = "svinefri") — matched right after the
+// specific term occurrence being tested, not anywhere in the whole token.
+// That distinction matters: an earlier whole-token version of this check
+// caused a real false negative on "Norsk benfri svinekam" ("benfri" =
+// boneless — bein/ben = bone, unrelated to negating the animal content) —
+// it saw *a* "-fri" suffix somewhere in the token and wrongly suppressed the
+// unrelated "svin" match found later in "svinekam". Same trap with
+// "skinnfri" (skinless). Anchoring the check to right after the matched
+// term itself fixes both while still catching "kjøttfri farse" (trailing
+// word after the suffix is fine, the regex only anchors on the left).
+function isNegatedBySuffix(afterMatch: string): boolean {
+  return /^e?fri(e)?(\s|$)/.test(afterMatch);
 }
 
 // Common, definitely-non-animal ingredient words. Not required for
@@ -389,12 +393,20 @@ function tokenize(raw: string): string[] {
   return tokens;
 }
 
+function hasUnnegatedOccurrence(token: string, term: string): boolean {
+  let idx = token.indexOf(term);
+  while (idx !== -1) {
+    if (!isNegatedBySuffix(token.slice(idx + term.length))) return true;
+    idx = token.indexOf(term, idx + 1);
+  }
+  return false;
+}
+
 function matchesAnimalTerm(token: string, terms: string[]): boolean {
   for (const marker of NEGATION_MARKERS) {
     if (token.includes(marker)) return false;
   }
-  if (tokenEndsWithFri(token)) return false;
-  return terms.some((term) => token.includes(term));
+  return terms.some((term) => hasUnnegatedOccurrence(token, term));
 }
 
 export function classifyDiet(ingredients: string | null | undefined): DietClassification {

@@ -11,15 +11,23 @@ const router = Router();
 // carbs figure (e.g. chia seeds: 1.8g carbs, 41g fiber — internally
 // inconsistent data, not something we can correct), which would otherwise
 // produce a nonsensical negative "net carbs".
-const NET_CARBS_EXPR = "GREATEST(0, carbs_total - COALESCE(fiber, 0))";
+// `prefix` lets the same expression run against a table alias (e.g. "r" for
+// the representative row in the grouped-products query below) without
+// duplicating the clamp logic or its comments.
+function netCarbsExpr(prefix = ""): string {
+  const p = prefix ? `${prefix}.` : "";
+  return `GREATEST(0, ${p}carbs_total - COALESCE(${p}fiber, 0))`;
+}
+const NET_CARBS_EXPR = netCarbsExpr();
 // Bulk "weigh at checkout" bin items (candy scoops, salad bars) sometimes
 // carry placeholder nutrition (kcal=1, protein=1, ...) rather than real
 // per-100g values — dividing by a near-zero kcal blows the percentage up to
 // implausible numbers (e.g. 400%). Below this floor we treat energy as
 // unknown rather than computing a nonsense ratio.
 const MIN_PLAUSIBLE_KCAL = 5;
-function percentOfEnergyExpr(gramsColumn: string, kcalPerGram: number): string {
-  return `(CASE WHEN energy_kcal >= ${MIN_PLAUSIBLE_KCAL} THEN ${gramsColumn} * ${kcalPerGram} / energy_kcal * 100 END)`;
+function percentOfEnergyExpr(gramsColumn: string, kcalPerGram: number, prefix = ""): string {
+  const p = prefix ? `${prefix}.` : "";
+  return `(CASE WHEN ${p}energy_kcal >= ${MIN_PLAUSIBLE_KCAL} THEN ${p}${gramsColumn} * ${kcalPerGram} / ${p}energy_kcal * 100 END)`;
 }
 
 const SORT_COLUMNS: Record<string, string> = {
@@ -142,6 +150,68 @@ function toApiProduct(row: any) {
     dietFlags: row.contains_diet_flags ?? [],
     dietParseStatus: row.diet_parse_status,
     dietUnmatchedTokens: row.diet_unmatched_tokens ?? [],
+  };
+}
+
+// Same sort keys as SORT_COLUMNS, reinterpreted for a group: price/discount
+// sorts mean "cheapest"/"best deal across the group's member rows" (via the
+// grouped-query aggregates below), everything else reads off the
+// representative row (r.-prefixed).
+const GROUPED_SORT_COLUMNS: Record<string, string> = {
+  name: "r.title",
+  price: "cheapest_price",
+  unitPrice: "cheapest_unit_price",
+  category: "r.category_name",
+  discountPercent: "best_discount_percent",
+  discountAmount: "best_discount_amount",
+  calories: "r.energy_kcal",
+  fat: "r.fat_total",
+  saturatedFat: "r.saturated_fat",
+  carbs: "r.carbs_total",
+  netCarbs: netCarbsExpr("r"),
+  sugar: "r.sugars",
+  fiber: "r.fiber",
+  protein: "r.protein",
+  salt: "r.salt",
+  proteinPercent: percentOfEnergyExpr("protein", 4, "r"),
+  carbsPercent: percentOfEnergyExpr("carbs_total", 4, "r"),
+  fatPercent: percentOfEnergyExpr("fat_total", 9, "r"),
+};
+
+// Absolute-difference tolerances for flagging that crawled stores disagree
+// on a shared EAN's nutrition — small enough to catch a genuinely wrong or
+// stale source, loose enough to not fire on ordinary label-rounding noise
+// between otherwise-identical scrapes.
+const MISMATCH_TOLERANCE = { kcal: 15, protein: 2, carbs: 2, fat: 2 };
+
+function toApiGroup(row: any) {
+  const kcalMismatch = row.kcal_spread !== null && Number(row.kcal_spread) > MISMATCH_TOLERANCE.kcal;
+  const proteinMismatch = row.protein_spread !== null && Number(row.protein_spread) > MISMATCH_TOLERANCE.protein;
+  const carbsMismatch = row.carbs_spread !== null && Number(row.carbs_spread) > MISMATCH_TOLERANCE.carbs;
+  const fatMismatch = row.fat_spread !== null && Number(row.fat_spread) > MISMATCH_TOLERANCE.fat;
+  const allergenMismatch = Number(row.allergen_variants) > 1;
+
+  const mismatchNotes: string[] = [];
+  if (kcalMismatch) mismatchNotes.push(`kalorier (spredning ${row.kcal_spread} kcal)`);
+  if (proteinMismatch) mismatchNotes.push(`protein (spredning ${row.protein_spread} g)`);
+  if (carbsMismatch) mismatchNotes.push(`karbohydrater (spredning ${row.carbs_spread} g)`);
+  if (fatMismatch) mismatchNotes.push(`fett (spredning ${row.fat_spread} g)`);
+  if (allergenMismatch) mismatchNotes.push("allergener");
+
+  return {
+    ean: row.ean,
+    memberCount: Number(row.member_count),
+    cheapestPrice: num(row.cheapest_price),
+    cheapestUnitPrice: num(row.cheapest_unit_price),
+    bestDiscountAmount: num(row.best_discount_amount),
+    bestDiscountPercent:
+      row.best_discount_percent !== null ? Math.round(Number(row.best_discount_percent) * 1000) / 10 : null,
+    anyOnOffer: row.any_on_offer,
+    anyInStock: row.any_in_stock,
+    hasDataMismatch: mismatchNotes.length > 0,
+    mismatchNote: mismatchNotes.length > 0 ? `Varierer mellom butikker: ${mismatchNotes.join(", ")} — se detaljer` : null,
+    representative: toApiProduct(row.representative_row),
+    members: (row.members as any[]).map(toApiProduct), // already cheapest-first from json_agg's ORDER BY
   };
 }
 
@@ -341,6 +411,360 @@ router.get("/products/:id/history", async (req, res) => {
       promotionName: r.promotion_name,
     })),
   });
+});
+
+// Cross-chain view: one entry per EAN instead of one per (chain, ean) row —
+// see CLAUDE.md / plan for the full rationale. Accepts the same query params
+// as GET /products; category/search/price/offer/stock filters use "any
+// member row matches" (bool_or/bool_and, HAVING, applied per ean group)
+// since those are legitimately per-store facts, while nutrition/allergen/
+// diet filters apply only to the chosen "representative" row (r.*) — the
+// same physical product is assumed to have one true nutrition profile, and
+// hasDataMismatch (below) flags when crawled stores actually disagree on it.
+router.get("/products/grouped", async (req, res) => {
+  const q = req.query as Record<string, string | undefined>;
+  const {
+    chain,
+    search,
+    includeCategories,
+    excludeCategories,
+    minPrice,
+    maxPrice,
+    minUnitPrice,
+    maxUnitPrice,
+    onOffer,
+    inStock,
+    minNetCarbs,
+    maxNetCarbs,
+    minProteinPercent,
+    maxProteinPercent,
+    minCarbsPercent,
+    maxCarbsPercent,
+    minFatPercent,
+    maxFatPercent,
+    avoidAllergens,
+    requireAllergens,
+    avoidDietTags,
+    requireDietTags,
+    sort = "name",
+    order = "asc",
+    page = "1",
+    pageSize = "50",
+  } = q;
+
+  const baseConditions: string[] = []; // WHERE on `base` (structural chain visibility only)
+  const havingConditions: string[] = []; // HAVING on `grouped` — "any member matches"
+  const repConditions: string[] = []; // WHERE on the joined query, r.-prefixed — representative-row-only
+  const params: unknown[] = [];
+
+  function addParam(value: unknown): number {
+    params.push(value);
+    return params.length;
+  }
+
+  if (chain) {
+    const chains = chain.split(",").map((c) => c.trim()).filter(Boolean);
+    if (chains.length > 0) {
+      baseConditions.push(`chain_key = ANY($${addParam(chains)})`);
+    }
+  }
+
+  if (search) {
+    const idx = addParam(`%${search}%`);
+    havingConditions.push(`bool_or(title ILIKE $${idx} OR subtitle ILIKE $${idx} OR brand ILIKE $${idx})`);
+  }
+
+  if (excludeCategories) {
+    const list = excludeCategories.split(",").map((c) => c.trim()).filter(Boolean);
+    if (list.length > 0) {
+      havingConditions.push(`bool_and(category_name IS NULL OR NOT (category_name = ANY($${addParam(list)})))`);
+    }
+  }
+  if (includeCategories) {
+    const list = includeCategories.split(",").map((c) => c.trim()).filter(Boolean);
+    if (list.length > 0) {
+      havingConditions.push(`bool_or(category_name = ANY($${addParam(list)}))`);
+    }
+  }
+
+  // min/max combined into one BETWEEN when both are given — two independent
+  // bool_or(...) checks would let two *different* members each satisfy one
+  // bound without either satisfying both, which isn't "a member in range".
+  if (minPrice && maxPrice) {
+    havingConditions.push(
+      `bool_or(current_price BETWEEN $${addParam(Number(minPrice))} AND $${addParam(Number(maxPrice))})`,
+    );
+  } else if (minPrice) {
+    havingConditions.push(`bool_or(current_price >= $${addParam(Number(minPrice))})`);
+  } else if (maxPrice) {
+    havingConditions.push(`bool_or(current_price <= $${addParam(Number(maxPrice))})`);
+  }
+
+  if (minUnitPrice && maxUnitPrice) {
+    havingConditions.push(
+      `bool_or(current_compare_price_per_unit BETWEEN $${addParam(Number(minUnitPrice))} AND $${addParam(Number(maxUnitPrice))})`,
+    );
+  } else if (minUnitPrice) {
+    havingConditions.push(`bool_or(current_compare_price_per_unit >= $${addParam(Number(minUnitPrice))})`);
+  } else if (maxUnitPrice) {
+    havingConditions.push(`bool_or(current_compare_price_per_unit <= $${addParam(Number(maxUnitPrice))})`);
+  }
+
+  if (onOffer === "true") havingConditions.push(`bool_or(is_offer)`);
+  if (inStock === "true") havingConditions.push(`bool_or(NOT is_out_of_stock AND is_for_sale)`);
+
+  // Raw per-100g macro range filters — representative row only.
+  for (const [key, column] of Object.entries(RANGE_FILTER_COLUMNS)) {
+    const minVal = q[`min${key}`];
+    const maxVal = q[`max${key}`];
+    if (minVal) repConditions.push(`r.${column} >= $${addParam(Number(minVal))}`);
+    if (maxVal) repConditions.push(`r.${column} <= $${addParam(Number(maxVal))}`);
+  }
+
+  if (minNetCarbs) repConditions.push(`${netCarbsExpr("r")} >= $${addParam(Number(minNetCarbs))}`);
+  if (maxNetCarbs) repConditions.push(`${netCarbsExpr("r")} <= $${addParam(Number(maxNetCarbs))}`);
+
+  if (minProteinPercent)
+    repConditions.push(`${percentOfEnergyExpr("protein", 4, "r")} >= $${addParam(Number(minProteinPercent))}`);
+  if (maxProteinPercent)
+    repConditions.push(`${percentOfEnergyExpr("protein", 4, "r")} <= $${addParam(Number(maxProteinPercent))}`);
+  if (minCarbsPercent)
+    repConditions.push(`${percentOfEnergyExpr("carbs_total", 4, "r")} >= $${addParam(Number(minCarbsPercent))}`);
+  if (maxCarbsPercent)
+    repConditions.push(`${percentOfEnergyExpr("carbs_total", 4, "r")} <= $${addParam(Number(maxCarbsPercent))}`);
+  if (minFatPercent)
+    repConditions.push(`${percentOfEnergyExpr("fat_total", 9, "r")} >= $${addParam(Number(minFatPercent))}`);
+  if (maxFatPercent)
+    repConditions.push(`${percentOfEnergyExpr("fat_total", 9, "r")} <= $${addParam(Number(maxFatPercent))}`);
+
+  if (avoidAllergens) {
+    const list = avoidAllergens.split(",").map((a) => a.trim()).filter(Boolean);
+    if (list.length > 0) {
+      repConditions.push(`(r.contains_allergens IS NULL OR NOT (r.contains_allergens && $${addParam(list)}))`);
+    }
+  }
+  if (requireAllergens) {
+    const list = requireAllergens.split(",").map((a) => a.trim()).filter(Boolean);
+    if (list.length > 0) {
+      repConditions.push(`r.contains_allergens @> $${addParam(list)}`);
+    }
+  }
+  if (avoidDietTags) {
+    const list = avoidDietTags.split(",").map((a) => a.trim()).filter(Boolean);
+    if (list.length > 0) {
+      repConditions.push(`(r.contains_diet_flags IS NULL OR NOT (r.contains_diet_flags && $${addParam(list)}))`);
+    }
+  }
+  if (requireDietTags) {
+    const list = requireDietTags.split(",").map((a) => a.trim()).filter(Boolean);
+    if (list.length > 0) {
+      repConditions.push(`r.contains_diet_flags @> $${addParam(list)}`);
+    }
+  }
+
+  const baseWhere = baseConditions.length > 0 ? `WHERE ${baseConditions.join(" AND ")}` : "";
+  const havingClause = havingConditions.length > 0 ? `HAVING ${havingConditions.join(" AND ")}` : "";
+  const repWhere = repConditions.length > 0 ? `WHERE ${repConditions.join(" AND ")}` : "";
+
+  const sortColumn = GROUPED_SORT_COLUMNS[sort] ?? "r.title";
+  const sortOrder = order === "desc" ? "DESC" : "ASC";
+  const orderClause = `ORDER BY ${sortColumn} IS NULL, ${sortColumn} ${sortOrder}`;
+
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const pageSizeNum = Math.min(200, Math.max(1, parseInt(pageSize, 10) || 50));
+  const offset = (pageNum - 1) * pageSizeNum;
+
+  const cte = `
+    WITH base AS (
+      SELECT * FROM products ${baseWhere}
+    ),
+    representative AS (
+      SELECT DISTINCT ON (ean) *
+      FROM base
+      ORDER BY ean, nutrition_fetched_at DESC NULLS LAST, id ASC
+    ),
+    grouped AS (
+      SELECT
+        ean,
+        COUNT(*) AS member_count,
+        MIN(current_price) AS cheapest_price,
+        MIN(current_compare_price_per_unit) AS cheapest_unit_price,
+        MAX(discount_amount) AS best_discount_amount,
+        MAX(CASE WHEN discount_amount IS NOT NULL AND original_price > 0
+                 THEN discount_amount / original_price END) AS best_discount_percent,
+        bool_or(is_offer) AS any_on_offer,
+        bool_or(NOT is_out_of_stock AND is_for_sale) AS any_in_stock,
+        json_agg(to_jsonb(base) ORDER BY current_price ASC NULLS LAST) AS members
+      FROM base
+      GROUP BY ean
+      ${havingClause}
+    ),
+    mismatch AS (
+      SELECT
+        ean,
+        MAX(energy_kcal) FILTER (WHERE nutrition_fetched_at IS NOT NULL)
+          - MIN(energy_kcal) FILTER (WHERE nutrition_fetched_at IS NOT NULL) AS kcal_spread,
+        MAX(protein) FILTER (WHERE nutrition_fetched_at IS NOT NULL)
+          - MIN(protein) FILTER (WHERE nutrition_fetched_at IS NOT NULL) AS protein_spread,
+        MAX(carbs_total) FILTER (WHERE nutrition_fetched_at IS NOT NULL)
+          - MIN(carbs_total) FILTER (WHERE nutrition_fetched_at IS NOT NULL) AS carbs_spread,
+        MAX(fat_total) FILTER (WHERE nutrition_fetched_at IS NOT NULL)
+          - MIN(fat_total) FILTER (WHERE nutrition_fetched_at IS NOT NULL) AS fat_spread,
+        COUNT(DISTINCT (SELECT array_agg(x ORDER BY x) FROM unnest(contains_allergens) x))
+          FILTER (WHERE nutrition_fetched_at IS NOT NULL) AS allergen_variants
+      FROM base
+      GROUP BY ean
+    )
+  `;
+
+  const joinAndFilter = `
+    FROM grouped g
+    JOIN representative r USING (ean)
+    JOIN mismatch m USING (ean)
+    ${repWhere}
+  `;
+
+  const countResult = await pool.query(`${cte} SELECT COUNT(*) FROM (SELECT g.ean ${joinAndFilter}) sub`, params);
+  const total = Number(countResult.rows[0].count);
+
+  const itemParams = [...params, pageSizeNum, offset];
+  const limitIdx = itemParams.length - 1;
+  const offsetIdx = itemParams.length;
+
+  const itemsResult = await pool.query(
+    `${cte}
+     SELECT g.ean, g.member_count, g.cheapest_price, g.cheapest_unit_price,
+            g.best_discount_amount, g.best_discount_percent, g.any_on_offer, g.any_in_stock, g.members,
+            to_jsonb(r) AS representative_row,
+            m.kcal_spread, m.protein_spread, m.carbs_spread, m.fat_spread, m.allergen_variants
+     ${joinAndFilter}
+     ${orderClause}
+     LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+    itemParams,
+  );
+
+  res.json({
+    total,
+    page: pageNum,
+    pageSize: pageSizeNum,
+    items: itemsResult.rows.map(toApiGroup),
+  });
+});
+
+// Combined multi-store price history for a single EAN — finds every chain's
+// row for that barcode (optionally scoped to `chain`, e.g. currently-visible
+// stores) and returns one history series per chain in a single query
+// (product_id = ANY(...)), not N+1.
+router.get("/products/by-ean/:ean/history", async (req, res) => {
+  const ean = req.params.ean;
+  const { chain } = req.query as Record<string, string | undefined>;
+
+  const conditions: string[] = ["ean = $1"];
+  const params: unknown[] = [ean];
+  if (chain) {
+    const chains = chain.split(",").map((c) => c.trim()).filter(Boolean);
+    if (chains.length > 0) {
+      params.push(chains);
+      conditions.push(`chain_key = ANY($${params.length})`);
+    }
+  }
+
+  const productsResult = await pool.query(
+    `SELECT id, chain_key, title, subtitle, compare_unit FROM products WHERE ${conditions.join(" AND ")} ORDER BY chain_key`,
+    params,
+  );
+
+  if (productsResult.rows.length === 0) {
+    res.status(404).json({ error: "No products found for this EAN" });
+    return;
+  }
+
+  const ids = productsResult.rows.map((r) => r.id);
+
+  const historyResult = await pool.query(
+    `SELECT product_id, changed_at, price, compare_price_per_unit, original_price,
+            discount_amount, is_offer, is_out_of_stock, is_for_sale, promotion_name
+     FROM price_history WHERE product_id = ANY($1) ORDER BY product_id, changed_at ASC`,
+    [ids],
+  );
+
+  const historyByProductId = new Map<number, unknown[]>();
+  for (const row of historyResult.rows) {
+    const list = historyByProductId.get(row.product_id) ?? [];
+    list.push({
+      changedAt: row.changed_at,
+      price: row.price !== null ? Number(row.price) : null,
+      comparePricePerUnit: row.compare_price_per_unit !== null ? Number(row.compare_price_per_unit) : null,
+      originalPrice: row.original_price !== null ? Number(row.original_price) : null,
+      discountAmount: row.discount_amount !== null ? Number(row.discount_amount) : null,
+      isOffer: row.is_offer,
+      isOutOfStock: row.is_out_of_stock,
+      isForSale: row.is_for_sale,
+      promotionName: row.promotion_name,
+    });
+    historyByProductId.set(row.product_id, list);
+  }
+
+  res.json({
+    ean,
+    chains: productsResult.rows.map((p) => ({
+      chain: p.chain_key,
+      // pg returns bigint columns as strings by default; cast explicitly so
+      // this matches the numeric `id` toApiProduct produces elsewhere (via
+      // to_jsonb, which serializes bigint as a plain JSON number instead).
+      productId: Number(p.id),
+      title: p.title,
+      subtitle: p.subtitle,
+      compareUnit: p.compare_unit,
+      points: historyByProductId.get(p.id) ?? [],
+    })),
+  });
+});
+
+// Live per-store pricing for a set of EANs — used by the shopping cart to
+// show "what would my whole basket cost at each store" without the cart
+// itself having to store stale prices from whenever items were added.
+router.get("/products/cart-pricing", async (req, res) => {
+  const { eans, chain } = req.query as Record<string, string | undefined>;
+  const eanList = (eans ?? "").split(",").map((e) => e.trim()).filter(Boolean);
+
+  if (eanList.length === 0) {
+    res.json({ items: {} });
+    return;
+  }
+
+  const conditions: string[] = ["ean = ANY($1)"];
+  const params: unknown[] = [eanList];
+  if (chain) {
+    const chains = chain.split(",").map((c) => c.trim()).filter(Boolean);
+    if (chains.length > 0) {
+      params.push(chains);
+      conditions.push(`chain_key = ANY($${params.length})`);
+    }
+  }
+
+  const result = await pool.query(
+    `SELECT ean, chain_key, current_price, current_compare_price_per_unit, compare_unit,
+            is_out_of_stock, is_for_sale, slugified_url
+     FROM products WHERE ${conditions.join(" AND ")}`,
+    params,
+  );
+
+  const items: Record<string, unknown[]> = {};
+  for (const row of result.rows) {
+    const list = items[row.ean] ?? (items[row.ean] = []);
+    list.push({
+      chain: row.chain_key,
+      price: row.current_price !== null ? Number(row.current_price) : null,
+      compareUnitPrice: row.current_compare_price_per_unit !== null ? Number(row.current_compare_price_per_unit) : null,
+      compareUnit: row.compare_unit,
+      isOutOfStock: row.is_out_of_stock,
+      isForSale: row.is_for_sale,
+      productUrl: row.slugified_url ? `https://${row.chain_key}.no/varer${row.slugified_url}` : null,
+    });
+  }
+
+  res.json({ items });
 });
 
 export default router;
