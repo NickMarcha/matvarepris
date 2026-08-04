@@ -35,7 +35,9 @@ services:
     command: npm run dev
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      target: dev
     restart: unless-stopped
     environment:
       VITE_API_URL: http://localhost:${BACKEND_PORT:-4000}

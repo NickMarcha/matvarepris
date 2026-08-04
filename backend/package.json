@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
+    "build": "tsc -p tsconfig.build.json && node -e \"require('fs').cpSync('src/db/migrations','dist/db/migrations',{recursive:true})\"",
     "ingest": "tsx src/ingest/runOnce.ts",
     "reclassify-diet": "tsx src/ingest/reclassifyDietOnce.ts"
   },
