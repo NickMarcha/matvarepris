@@ -2,7 +2,7 @@
 
 Contract version: 1
 
-<!-- Checked against: 78348935d799 -->
+<!-- Checked against: 408a6b6bb74c -->
 
 Answers: how does another program get Meny, Spar and Joker products, prices and nutrition out of this, and how does it keep up when they change?
 
