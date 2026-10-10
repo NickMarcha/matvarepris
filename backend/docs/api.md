@@ -2,6 +2,8 @@
 
 Contract version: 1
 
+<!-- Checked against: 78348935d799 -->
+
 Answers: how does another program get Meny, Spar and Joker products, prices and nutrition out of this, and how does it keep up when they change?
 
 **This document is what `GET /api/v1/info` returns**, as `guide`, with the number above as `contractVersion`. A program keeps the number it was built against and re-reads this guide when the number moves. The number goes up when a change would matter to a caller: a field renamed or removed, a meaning changed, a status code changed, a new requirement. Prose fixes and new optional fields don't move it. Every bump gets a line under [Changes](#changes).
