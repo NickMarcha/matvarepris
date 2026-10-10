@@ -1,0 +1,2 @@
+# Shell hooks must keep LF or sh chokes on the .
+.githooks/* text eol=lf
