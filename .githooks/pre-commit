@@ -1,0 +1,8 @@
+#!/bin/sh
+# AGENTS.md is an exact copy of CLAUDE.md, for agents that look for that
+# name (Codex and others). Edit CLAUDE.md only; this copies it on every commit.
+cd "$(git rev-parse --show-toplevel)"
+if ! cmp -s CLAUDE.md AGENTS.md; then
+  cp CLAUDE.md AGENTS.md
+  git add AGENTS.md
+fi

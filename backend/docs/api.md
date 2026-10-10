@@ -12,7 +12,7 @@ Base path: `/api/v1`. The unversioned `/api/*` routes belong to this project's o
 
 ## What the data is
 
-- Products come from NorgesGruppen's public search backend for three chains: `meny`, `spar` and `joker`. Kiwi has no webshop and isn't included. The catalog refreshes every 6 hours.
+- Products come from NorgesGruppen's public search backend for three chains: `meny`, `spar` and `joker`. Kiwi has no webshop and isn't included. The catalog refreshes once a day, at 03:00 UTC, and again whenever the server restarts.
 - Prices are chain-wide web prices, not a particular store's shelf price.
 - Nutrition, allergens and ingredients aren't in the bulk catalog. A background crawler reads them from each product page at about one page every 2-3 seconds, so a new install takes about half a day to fill them in. Until then most items have `nutrition: null`.
 - Diet flags come from a heuristic parser of Norwegian ingredient text. It is wrong sometimes. Don't use it for a real allergy. Allergens are the store's own legal declaration and are more trustworthy, but an allergen list can only be as complete as the crawl.
@@ -148,7 +148,7 @@ GET /api/v1/changes?since=781.22204&limit=500
 A sync loop:
 
 1. Get a cursor once with `since=latest` and store it. Load what you need with `/products/lookup`.
-2. Every few minutes, or after the 6-hour refresh, call `/changes?since=<cursor>`. Keep going while `hasMore` is true.
+2. Every few minutes, or once after the daily refresh, call `/changes?since=<cursor>`. Keep going while `hasMore` is true.
 3. Collect the EANs you care about from `changes`, re-read them with `/products/lookup`, and store the last cursor.
 
 ### `GET /api/v1/info` and `GET /api/v1/health`

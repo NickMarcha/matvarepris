@@ -16,7 +16,7 @@ import v1Router from "./routes/v1.js";
 import { warnIfAdminOpen } from "./auth.js";
 
 const PORT = Number(process.env.PORT ?? 4000);
-const CRON_SCHEDULE = process.env.CRON_SCHEDULE ?? "0 */6 * * *";
+const CRON_SCHEDULE = process.env.CRON_SCHEDULE ?? "0 3 * * *";
 const INGEST_ON_STARTUP = process.env.INGEST_ON_STARTUP !== "false";
 // Off for a local copy of the production database, so testing doesn't
 // start fetching product pages from the stores.

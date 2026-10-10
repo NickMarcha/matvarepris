@@ -20,7 +20,7 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-matvarepris}:${POSTGRES_PASSWORD:-matvarepris}@db:5432/${POSTGRES_DB:-matvarepris}
       PORT: 4000
-      CRON_SCHEDULE: ${CRON_SCHEDULE:-0 */6 * * *}
+      CRON_SCHEDULE: ${CRON_SCHEDULE:-0 3 * * *}
       INGEST_ON_STARTUP: ${INGEST_ON_STARTUP:-true}
       NUTRITION_CRAWL_DELAY_MS: ${NUTRITION_CRAWL_DELAY_MS:-2000}
       ADMIN_API_KEY: ${ADMIN_API_KEY:-}

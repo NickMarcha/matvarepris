@@ -104,17 +104,6 @@ export async function fetchProductDetail(id: number): Promise<ProductDetail> {
   return res.json();
 }
 
-export async function triggerIngest(): Promise<void> {
-  const res = await fetch(`${API_URL}/api/ingest/run`, { method: "POST" });
-  if (!res.ok && res.status !== 409) throw new Error(`Failed to trigger ingest: ${res.status}`);
-}
-
-export async function fetchIngestStatus(): Promise<{ running: boolean; lastRun: unknown }> {
-  const res = await fetch(`${API_URL}/api/ingest/status`);
-  if (!res.ok) throw new Error(`Failed to fetch ingest status: ${res.status}`);
-  return res.json();
-}
-
 export async function fetchStats(): Promise<Stats> {
   const res = await fetch(`${API_URL}/api/stats`);
   if (!res.ok) throw new Error(`Failed to fetch stats: ${res.status}`);

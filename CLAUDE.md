@@ -1,5 +1,9 @@
 # MatvarePris — agent orientation
 
+> Edit this file, not `AGENTS.md`. The pre-commit hook (`.githooks/pre-commit`)
+> copies it to `AGENTS.md`. Hooks need `git config core.hooksPath .githooks` once
+> per clone.
+
 Personal full-stack tool for browsing/filtering NorgesGruppen grocery data
 (Meny, Spar, Joker) with better filtering than the official sites expose,
 plus price-history tracking. Node/TypeScript + Express backend, React/Vite

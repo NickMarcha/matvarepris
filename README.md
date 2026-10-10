@@ -178,8 +178,9 @@ On first start the backend runs migrations, then kicks off a full catalog
 ingest for Meny, Spar, and Joker (a few minutes — dozens of paginated
 requests per chain, throttled ~250ms apart to be polite to the upstream API).
 After that it refreshes on the cron schedule in `.env` (`CRON_SCHEDULE`,
-default every 6 hours), or on demand via the "Oppdater nå" button in the UI
-(`POST /api/ingest/run`).
+default daily at 03:00 UTC). There's no refresh button in the UI; to refresh
+by hand, `POST /api/ingest/run`, with `Authorization: Bearer $ADMIN_API_KEY`
+if that's set.
 
 Copy `.env.example` to `.env` to customize ports, cron schedule, or whether
 ingestion runs automatically on container startup (`INGEST_ON_STARTUP`).

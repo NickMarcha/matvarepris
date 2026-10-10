@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchCategories, fetchChains, fetchGroupedProducts, fetchIngestStatus, triggerIngest } from "./api";
+import { fetchCategories, fetchChains, fetchGroupedProducts } from "./api";
 import { useCart } from "./CartContext";
 import { filtersToParams, paramsToFilters } from "./filterParams";
 import { loadSettings, type AppSettings } from "./settings";
@@ -18,7 +18,6 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<ProductGroup | null>(null);
-  const [ingestRunning, setIngestRunning] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   const [showNutritionColumns, setShowNutritionColumns] = useState(false);
   // Bumped whenever the product detail modal closes — opening it can trigger
@@ -66,19 +65,6 @@ export default function App() {
     window.history.replaceState(null, "", url);
   }, [filters]);
 
-  useEffect(() => {
-    if (!ingestRunning) return;
-    const interval = setInterval(() => {
-      fetchIngestStatus().then((status) => {
-        if (!status.running) {
-          setIngestRunning(false);
-          fetchChains().then(setChains).catch(() => {});
-        }
-      });
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [ingestRunning]);
-
   function patchFilters(patch: Partial<Filters>) {
     setFilters((prev) => ({ ...prev, ...patch }));
   }
@@ -90,11 +76,6 @@ export default function App() {
       order: prev.sort === sort && prev.order === "asc" ? "desc" : "asc",
       page: 1,
     }));
-  }
-
-  async function handleRefresh() {
-    setIngestRunning(true);
-    await triggerIngest();
   }
 
   const maxPage = Math.max(1, Math.ceil(total / filters.pageSize));
@@ -123,9 +104,6 @@ export default function App() {
                 : "aldri"}
             </span>
           )}
-          <button onClick={handleRefresh} disabled={ingestRunning}>
-            {ingestRunning ? "Oppdaterer…" : "Oppdater nå"}
-          </button>
           <button onClick={() => setCartOpen(true)}>Handlekurv ({totalCount})</button>
           <a className="back-link" href="/settings">
             Innstillinger →
