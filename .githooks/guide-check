@@ -13,10 +13,13 @@ set -e
 
 GUIDE="backend/docs/api.md"
 
-# Files the guide makes claims about: the v1 routes, the shared row->JSON
+# Files the guide makes claims about: the v1 routes and their schemas and
+# OpenAPI builder, the shared row->JSON
 # mapping and search query in products.ts, chains/categories (mounted under
 # v1 as-is), the change-feed trigger, and the admin guard.
 WATCHED="backend/src/routes/v1.ts
+backend/src/routes/v1Schemas.ts
+backend/src/routes/v1OpenApi.ts
 backend/src/routes/products.ts
 backend/src/routes/chains.ts
 backend/src/routes/categories.ts

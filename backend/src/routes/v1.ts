@@ -4,6 +4,15 @@ import { fileURLToPath } from "node:url";
 import { Router } from "express";
 import { pool } from "../db/pool.js";
 import { eanHistoryHandler, queryGroupedProducts, toApiProduct } from "./products.js";
+import { buildOpenApi } from "./v1OpenApi.js";
+import {
+  EAN_PATTERN,
+  LOOKUP_MAX_EANS,
+  type ChangePageT,
+  type ContentT,
+  type ItemT,
+  type OfferT,
+} from "./v1Schemas.js";
 
 // The versioned API for other programs (docs/api.md is its contract). The
 // unversioned /api routes stay shaped for this repo's own frontend and can
@@ -20,8 +29,6 @@ const router = Router();
 // backend root, where docs/ lives.
 const GUIDE_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "docs", "api.md");
 
-const EAN_PATTERN = /^\d{8,14}$/;
-const LOOKUP_MAX_EANS = 200;
 const CHANGES_DEFAULT_LIMIT = 500;
 const CHANGES_MAX_LIMIT = 2000;
 
@@ -42,7 +49,7 @@ function representative(rows: any[]): any {
   })[0];
 }
 
-function toOffer(row: any) {
+function toOffer(row: any): OfferT {
   const p = toApiProduct(row);
   return {
     chain: p.chain,
@@ -64,7 +71,7 @@ function toOffer(row: any) {
 // stored `weight` is no good for this: it's the shipping mass even for
 // drinks (a 450 ml tub reports 0.269). price / comparePricePerUnit is what
 // the store itself divided by.
-function contentOf(offers: ReturnType<typeof toOffer>[]) {
+function contentOf(offers: OfferT[]): ContentT | null {
   for (const o of offers) {
     if (o.price && o.comparePricePerUnit && o.compareUnit) {
       return { amount: Math.round((o.price / o.comparePricePerUnit) * 1000) / 1000, unit: o.compareUnit };
@@ -73,7 +80,7 @@ function contentOf(offers: ReturnType<typeof toOffer>[]) {
   return null;
 }
 
-function toItem(rows: any[]) {
+function toItem(rows: any[]): ItemT {
   const repRow = representative(rows);
   const rep = toApiProduct(repRow);
   const offers = rows
@@ -113,16 +120,35 @@ async function rowsByEan(eans: string[], chains: string[]): Promise<Map<string, 
   return byEan;
 }
 
-router.get("/info", (_req, res) => {
-  let guide: string;
+function readGuide(): { guide: string; contractVersion: number } | null {
   try {
-    guide = fs.readFileSync(GUIDE_PATH, "utf8");
+    const guide = fs.readFileSync(GUIDE_PATH, "utf8");
+    return { guide, contractVersion: Number(guide.match(/^Contract version:\s*(\d+)/m)?.[1]) };
   } catch {
+    return null;
+  }
+}
+
+router.get("/info", (_req, res) => {
+  const info = readGuide();
+  if (!info) {
     res.status(500).json({ error: "API guide missing from this build" });
     return;
   }
-  const version = Number(guide.match(/^Contract version:\s*(\d+)/m)?.[1]);
-  res.json({ contractVersion: version, guide });
+  res.json({ contractVersion: info.contractVersion, guide: info.guide });
+});
+
+// Built once: it only depends on code and the guide's version line, both
+// fixed for the life of the process.
+let openApiDoc: ReturnType<typeof buildOpenApi> | null = null;
+router.get("/openapi.json", (_req, res) => {
+  const info = readGuide();
+  if (!info) {
+    res.status(500).json({ error: "API guide missing from this build" });
+    return;
+  }
+  openApiDoc ??= buildOpenApi(info.contractVersion);
+  res.json(openApiDoc);
 });
 
 router.get("/products", async (req, res) => {
@@ -147,7 +173,7 @@ router.post("/products/lookup", async (req, res) => {
   }
   const invalid = eans.filter((e) => typeof e !== "string" || !EAN_PATTERN.test(e));
   if (invalid.length > 0) {
-    res.status(400).json({ error: "EANs must be strings of 8-14 digits", invalid });
+    res.status(400).json({ error: "EANs must be strings of 1-14 digits", invalid });
     return;
   }
 
@@ -162,7 +188,7 @@ router.post("/products/lookup", async (req, res) => {
 router.get("/products/:ean", async (req, res) => {
   const { ean } = req.params;
   if (!EAN_PATTERN.test(ean)) {
-    res.status(400).json({ error: "EAN must be 8-14 digits" });
+    res.status(400).json({ error: "EAN must be 1-14 digits" });
     return;
   }
   const rows = (await rowsByEan([ean], chainList(req.query.chain))).get(ean);
@@ -194,7 +220,8 @@ router.get("/changes", async (req, res) => {
        ORDER BY change_txid DESC, change_seq DESC LIMIT 1`,
     );
     const row = head.rows[0];
-    res.json({ cursor: row ? `${row.txid}.${row.change_seq}` : "0.0", hasMore: false, changes: [] });
+    const page: ChangePageT = { cursor: row ? `${row.txid}.${row.change_seq}` : "0.0", hasMore: false, changes: [] };
+    res.json(page);
     return;
   }
 
@@ -216,11 +243,12 @@ router.get("/changes", async (req, res) => {
   const hasMore = result.rows.length > limit;
   const rows = result.rows.slice(0, limit);
   const last = rows[rows.length - 1];
-  res.json({
+  const page: ChangePageT = {
     cursor: last ? `${last.txid}.${last.change_seq}` : `${match[1]}.${match[2]}`,
     hasMore,
     changes: rows.map((r) => ({ ean: r.ean, chain: r.chain_key, kinds: r.change_kinds })),
-  });
+  };
+  res.json(page);
 });
 
 export default router;

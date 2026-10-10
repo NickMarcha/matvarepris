@@ -194,6 +194,13 @@ the guide was last stamped; re-read it, then `.githooks/guide-check --write`.
 `GET /api/v1/changes` is fed by the `products_track_change` trigger
 (migration 0007); add any new client-visible column to its comparisons.
 
+v1 response shapes live once, as zod schemas in `routes/v1Schemas.ts`. The
+mappers in `v1.ts` are typed with them (a missing or extra field fails
+`tsc`), `routes/v1OpenApi.ts` generates `/api/v1/openapi.json` from them, and
+`npm run check-api [-- <base url>]` parses real responses with them. Run
+`check-api` after touching v1; it's read-only, so pointing it at production
+is fine.
+
 ## UI work
 
 Follow `Uncodixify.md` from github.com/NickMarcha/agents.md (private): no

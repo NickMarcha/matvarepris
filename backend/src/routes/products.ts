@@ -57,7 +57,7 @@ const SORT_COLUMNS: Record<string, string> = {
 
 // Simple per-100g range filters: query params `min<Key>`/`max<Key>` map
 // straight onto a column, e.g. minCarbs/maxCarbs -> carbs_total.
-const RANGE_FILTER_COLUMNS: Record<string, string> = {
+export const RANGE_FILTER_COLUMNS: Record<string, string> = {
   Calories: "energy_kcal",
   Fat: "fat_total",
   SaturatedFat: "saturated_fat",
@@ -157,7 +157,7 @@ export function toApiProduct(row: any) {
 // sorts mean "cheapest"/"best deal across the group's member rows" (via the
 // grouped-query aggregates below), everything else reads off the
 // representative row (r.-prefixed).
-const GROUPED_SORT_COLUMNS: Record<string, string> = {
+export const GROUPED_SORT_COLUMNS: Record<string, string> = {
   name: "r.title",
   price: "cheapest_price",
   unitPrice: "cheapest_unit_price",

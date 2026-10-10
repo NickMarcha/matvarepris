@@ -19,7 +19,7 @@ Base path: `/api/v1`. The unversioned `/api/*` routes belong to this project's o
 
 ## Items
 
-Everything is keyed by EAN (the barcode). One item is one EAN, with one offer per chain that sells it. Store your references as EANs. The `productId` inside an offer is internal, differs per chain, and changes if the database is rebuilt.
+Everything is keyed by EAN (the barcode). One item is one EAN, with one offer per chain that sells it. Loose produce, bakery and deli items have a short NorgesGruppen item code instead, 4 to 7 digits (`4048` is lime). It means the same product at every chain, so treat it like an EAN. Store your references as EANs. The `productId` inside an offer is internal, differs per chain, and changes if the database is rebuilt.
 
 ```json
 {
@@ -68,7 +68,7 @@ Everything is keyed by EAN (the barcode). One item is one EAN, with one offer pe
 
 ### `GET /api/v1/products/{ean}`
 
-One item. Optional `chain=meny,spar` limits the offers. Returns 404 when no chain sells that EAN, and 400 when the EAN isn't 8-14 digits.
+One item. Optional `chain=meny,spar` limits the offers. Returns 404 when no chain sells that EAN, and 400 when it isn't 1-14 digits.
 
 ### `POST /api/v1/products/lookup`
 
@@ -154,6 +154,12 @@ A sync loop:
 ### `GET /api/v1/info` and `GET /api/v1/health`
 
 `info` returns `{ contractVersion, guide }`, where `guide` is this document. `health` returns `{ ok: true }` when the process is up.
+
+### `GET /api/v1/openapi.json`
+
+An OpenAPI 3.1 description of every v1 endpoint, with an `operationId` on each (`lookupProducts`, `listChanges`, ...) for client generators. For TypeScript, `npx openapi-typescript https://matvarepris.nickmarcha.com/api/v1/openapi.json -o matvarepris.d.ts` gives you types for all of it. `info.version` in the spec is the contract version. The spec covers field names and types. What a `null` means, and how to run the change-feed loop, is only in this guide.
+
+Response objects are open. A new optional field can appear without a version bump, so don't reject properties you don't recognise.
 
 ## Errors and limits
 
