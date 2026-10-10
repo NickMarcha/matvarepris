@@ -175,6 +175,29 @@ Full param list is in README's "API" section. Backend: `GET /api/products`
 `/api/ingest/run` (POST) + `/api/ingest/status`,
 `/api/diet-classification/report` + `/reclassify` (POST).
 
+The two POSTs need `Authorization: Bearer $ADMIN_API_KEY` when that env var
+is set (`src/auth.ts`); unset, they're open, for local dev.
+
+**`/api/v1/*` is the contract for other programs** (the meal planner, anyone
+the API is shared with), documented in `backend/docs/api.md` and served by
+`GET /api/v1/info`. The unversioned routes above are the UI's and may change
+freely; v1 may not. If a change would matter to a v1 caller (renamed or
+removed field, changed meaning or status code, new requirement), bump
+`Contract version:` in the guide and add a line under its Changes section.
+The pre-push hook (`.githooks/guide-check`, enable with
+`git config core.hooksPath .githooks`) warns when watched files changed since
+the guide was last stamped; re-read it, then `.githooks/guide-check --write`.
+`GET /api/v1/changes` is fed by the `products_track_change` trigger
+(migration 0007); add any new client-visible column to its comparisons.
+
+## UI work
+
+Follow `Uncodixify.md` from github.com/NickMarcha/agents.md (private): no
+pills, no uppercase eyebrow labels, no gradients or big shadows, 8-10px radii
+at most, and keep this project's existing warm-gray palette in `styles.css`
+rather than inventing colors. User-facing text follows `Unslop.md` from the
+same repo.
+
 ## Verifying frontend changes
 
 No automated frontend test suite exists — verify UI changes by actually

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Warns, never blocks. Whether a change is worth a guide update is a judgement
+# call; a hard gate would teach people to click through it.
+.githooks/guide-check || true
+exit 0

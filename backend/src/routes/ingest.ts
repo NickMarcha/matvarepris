@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requireAdmin } from "../auth.js";
 import { runAllChains, getIngestStatus } from "../ingest/runAll.js";
 import { getNutritionCrawlStatus } from "../ingest/nutritionCrawler.js";
 
@@ -12,7 +13,7 @@ router.get("/nutrition-crawl/status", async (_req, res) => {
   res.json(await getNutritionCrawlStatus());
 });
 
-router.post("/ingest/run", (_req, res) => {
+router.post("/ingest/run", requireAdmin, (_req, res) => {
   const status = getIngestStatus();
   if (status.running) {
     res.status(409).json({ error: "Ingest already in progress" });

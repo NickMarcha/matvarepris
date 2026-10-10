@@ -1,0 +1,78 @@
+#!/bin/sh
+# Has backend/docs/api.md been read since the code it describes last changed?
+#
+# Adapted from VoiceWorkshop's hook. The contract version in the guide is an
+# editorial call (it moves when a caller would care), so it can't double as
+# "the code moved". This hashes the watched files' blobs at HEAD and compares
+# against the stamp kept in the guide as an HTML comment. Clearing the warning
+# means re-reading the guide, then `.githooks/guide-check --write`: the stamp
+# records that someone looked, not that someone edited.
+#
+# The guide itself isn't watched, or stamping it would invalidate the stamp.
+set -e
+
+GUIDE="backend/docs/api.md"
+
+# Files the guide makes claims about: the v1 routes, the shared row->JSON
+# mapping and search query in products.ts, chains/categories (mounted under
+# v1 as-is), the change-feed trigger, and the admin guard.
+WATCHED="backend/src/routes/v1.ts
+backend/src/routes/products.ts
+backend/src/routes/chains.ts
+backend/src/routes/categories.ts
+backend/src/db/migrations/0007_change_feed.sql
+backend/src/auth.ts"
+
+cd "$(git rev-parse --show-toplevel)"
+
+current() {
+  blobs=""
+  for path in $WATCHED; do
+    blob=$(git rev-parse "HEAD:$path" 2>/dev/null) || return 1
+    blobs="$blobs$blob
+"
+  done
+  printf '%s' "$blobs" | sha256sum | cut -c1-12
+}
+
+stamped() {
+  sed -n 's/^<!-- Checked against: \([0-9a-f]*\) -->$/\1/p' "$GUIDE" | head -1
+}
+
+now=$(current) || {
+  echo "guide-check: a watched file is missing at HEAD; skipping." >&2
+  exit 0
+}
+
+if [ "$1" = "--write" ]; then
+  if grep -q '^<!-- Checked against:' "$GUIDE"; then
+    sed -i "s/^<!-- Checked against:.*/<!-- Checked against: $now -->/" "$GUIDE"
+  else
+    sed -i "s/^\(Contract version: [0-9]*\)$/\1\n\n<!-- Checked against: $now -->/" "$GUIDE"
+  fi
+  echo "guide-check: stamped $GUIDE at $now. Commit it."
+  exit 0
+fi
+
+was=$(stamped)
+[ "$now" = "$was" ] && exit 0
+
+since=$(git log -1 --format=%h -- "$GUIDE" 2>/dev/null)
+
+echo ""
+echo "  $GUIDE may be stale."
+echo ""
+if [ -z "$was" ]; then
+  echo "  It carries no stamp yet, so nobody has recorded reading it against the code."
+else
+  echo "  The code it describes has changed since it was last read:"
+fi
+echo ""
+if [ -n "$since" ]; then
+  echo "    git diff $since..HEAD -- $(echo $WATCHED)"
+fi
+echo ""
+echo "  If a caller would care, update the guide, bump 'Contract version:' and add"
+echo "  a line under Changes. If not, it still needs reading once:"
+echo "    .githooks/guide-check --write"
+echo ""

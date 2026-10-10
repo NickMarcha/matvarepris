@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requireAdmin } from "../auth.js";
 import { pool } from "../db/pool.js";
 import { reclassifyAllDiet, isReclassifyRunning } from "../ingest/reclassifyDiet.js";
 
@@ -39,7 +40,7 @@ router.get("/diet-classification/report", async (_req, res) => {
   });
 });
 
-router.post("/diet-classification/reclassify", (_req, res) => {
+router.post("/diet-classification/reclassify", requireAdmin, (_req, res) => {
   if (isReclassifyRunning()) {
     res.status(409).json({ error: "Reclassify already in progress" });
     return;

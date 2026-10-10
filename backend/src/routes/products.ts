@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 import { pool } from "../db/pool.js";
 
 const router = Router();
@@ -78,7 +78,7 @@ function num(value: unknown): number | null {
   return value !== null && value !== undefined ? Number(value) : null;
 }
 
-function toApiProduct(row: any) {
+export function toApiProduct(row: any) {
   const protein = num(row.protein);
   const carbs = num(row.carbs_total);
   const fat = num(row.fat_total);
@@ -421,8 +421,9 @@ router.get("/products/:id/history", async (req, res) => {
 // diet filters apply only to the chosen "representative" row (r.*) — the
 // same physical product is assumed to have one true nutrition profile, and
 // hasDataMismatch (below) flags when crawled stores actually disagree on it.
-router.get("/products/grouped", async (req, res) => {
-  const q = req.query as Record<string, string | undefined>;
+// Exported so GET /api/v1/products can run the same search and shape the
+// rows its own way; the route below keeps the UI's response format.
+export async function queryGroupedProducts(q: Record<string, string | undefined>) {
   const {
     chain,
     search,
@@ -643,11 +644,16 @@ router.get("/products/grouped", async (req, res) => {
     itemParams,
   );
 
+  return { total, page: pageNum, pageSize: pageSizeNum, rows: itemsResult.rows };
+}
+
+router.get("/products/grouped", async (req, res) => {
+  const result = await queryGroupedProducts(req.query as Record<string, string | undefined>);
   res.json({
-    total,
-    page: pageNum,
-    pageSize: pageSizeNum,
-    items: itemsResult.rows.map(toApiGroup),
+    total: result.total,
+    page: result.page,
+    pageSize: result.pageSize,
+    items: result.rows.map(toApiGroup),
   });
 });
 
@@ -655,7 +661,8 @@ router.get("/products/grouped", async (req, res) => {
 // row for that barcode (optionally scoped to `chain`, e.g. currently-visible
 // stores) and returns one history series per chain in a single query
 // (product_id = ANY(...)), not N+1.
-router.get("/products/by-ean/:ean/history", async (req, res) => {
+// Also served as GET /api/v1/products/:ean/history.
+export const eanHistoryHandler: RequestHandler<{ ean: string }> = async (req, res) => {
   const ean = req.params.ean;
   const { chain } = req.query as Record<string, string | undefined>;
 
@@ -719,7 +726,9 @@ router.get("/products/by-ean/:ean/history", async (req, res) => {
       points: historyByProductId.get(p.id) ?? [],
     })),
   });
-});
+};
+
+router.get("/products/by-ean/:ean/history", eanHistoryHandler);
 
 // Live per-store pricing for a set of EANs — used by the shopping cart to
 // show "what would my whole basket cost at each store" without the cart

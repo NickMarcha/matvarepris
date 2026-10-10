@@ -186,6 +186,11 @@ ingestion runs automatically on container startup (`INGEST_ON_STARTUP`).
 
 ## API
 
+Other programs should use the versioned API under `/api/v1`, documented in
+[`backend/docs/api.md`](backend/docs/api.md) (also served at
+`GET /api/v1/info`). It's keyed by EAN, has batch lookup and a change feed.
+The routes below are what this project's own frontend uses.
+
 - `GET /api/products?chain=meny,spar&search=melk&includeCategories=Meieri%20%26%20egg&minUnitPrice=0&maxUnitPrice=20&onOffer=true&inStock=true&sort=unitPrice&order=asc&page=1&pageSize=50`
 - `GET /api/products/:id/history` — price/offer/stock change history for one product
 - `GET /api/products/:id/detail` — ingredients, allergens, nutrition, origin (fetched live on first request, then cached)

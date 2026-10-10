@@ -21,6 +21,8 @@ RUN npm install
 # `docker exec` — only the main server process (CMD) runs from dist.
 COPY src ./src
 COPY --from=builder /app/dist ./dist
+# The v1 API guide, served by GET /api/v1/info.
+COPY docs ./docs
 
 EXPOSE 4000
 

@@ -12,10 +12,15 @@ import chainsRouter from "./routes/chains.js";
 import ingestRouter from "./routes/ingest.js";
 import statsRouter from "./routes/stats.js";
 import dietClassificationRouter from "./routes/dietClassification.js";
+import v1Router from "./routes/v1.js";
+import { warnIfAdminOpen } from "./auth.js";
 
 const PORT = Number(process.env.PORT ?? 4000);
 const CRON_SCHEDULE = process.env.CRON_SCHEDULE ?? "0 */6 * * *";
 const INGEST_ON_STARTUP = process.env.INGEST_ON_STARTUP !== "false";
+// Off for a local copy of the production database, so testing doesn't
+// start fetching product pages from the stores.
+const NUTRITION_CRAWL = process.env.NUTRITION_CRAWL !== "false";
 
 async function main() {
   await runMigrations();
@@ -23,6 +28,7 @@ async function main() {
   const app = express();
   app.use(cors());
   app.use(express.json());
+  warnIfAdminOpen();
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
   app.use("/api", productsRouter);
@@ -33,12 +39,16 @@ async function main() {
   app.use("/api", statsRouter);
   app.use("/api", dietClassificationRouter);
 
+  // Versioned API for other programs; contract in docs/api.md.
+  app.get("/api/v1/health", (_req, res) => res.json({ ok: true }));
+  app.use("/api/v1", v1Router, chainsRouter, categoriesRouter);
+
   app.listen(PORT, () => {
     console.log(`[server] listening on port ${PORT}`);
   });
 
   startScheduler(CRON_SCHEDULE);
-  startNutritionCrawler();
+  if (NUTRITION_CRAWL) startNutritionCrawler();
 
   if (INGEST_ON_STARTUP) {
     console.log("[server] running initial ingest on startup");

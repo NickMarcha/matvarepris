@@ -25,6 +25,7 @@ services:
       CRON_SCHEDULE: ${CRON_SCHEDULE:-0 */6 * * *}
       INGEST_ON_STARTUP: ${INGEST_ON_STARTUP:-true}
       NUTRITION_CRAWL_DELAY_MS: ${NUTRITION_CRAWL_DELAY_MS:-2000}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-}
     ports:
       - "${BACKEND_PORT:-4000}:4000"
     depends_on:
@@ -32,6 +33,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend/src:/app/src
+      - ./backend/docs:/app/docs
     command: npm run dev
 
   frontend:
