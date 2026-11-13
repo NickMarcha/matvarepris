@@ -22,6 +22,7 @@ export interface Nutrition {
 export interface Product {
   id: number;
   chain: string;
+  lastCheckedAt: string | null;
   ean: string;
   title: string;
   subtitle: string | null;
@@ -94,7 +95,7 @@ export interface Category {
 export interface Chain {
   key: string;
   displayName: string;
-  source: "ngdata" | "kassalapp";
+  source: "ngdata" | "kassalapp" | "reported";
   productCount: number;
   lastCheckedAt: string | null;
 }

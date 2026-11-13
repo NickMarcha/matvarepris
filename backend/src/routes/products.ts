@@ -88,6 +88,8 @@ export function toApiProduct(row: any) {
   return {
     id: row.id,
     chain: row.chain_key,
+    // For a reported chain, the day the newest report was seen in the store.
+    lastCheckedAt: row.last_checked_at ?? null,
     ean: row.ean,
     title: row.title,
     subtitle: row.subtitle,

@@ -63,7 +63,8 @@ export const Nutrition = register(
 
 export const Offer = register(
   z.object({
-    chain: z.string().describe("Chain key: meny, spar, joker (NorgesGruppen), or oda, bunnpris and others (Kassalapp); see /chains"),
+    chain: z.string().describe("Chain key: meny, spar, joker (NorgesGruppen), oda, bunnpris and others (Kassalapp), or kiwi, rema, extra and others (reported); see /chains"),
+    source: z.enum(["ngdata", "kassalapp", "reported"]).describe("Where this price comes from: the chain's own webshop search, kassal.app, or prices people reported from receipts and shelves"),
     productId: z.number().int().describe("Internal, per chain. Store EANs, not this"),
     price: z.number().nullable().describe("Kroner for one package"),
     comparePricePerUnit: z.number().nullable().describe("Kroner per compareUnit"),
@@ -74,7 +75,7 @@ export const Offer = register(
     promotionName: z.string().nullable(),
     inStock: z.boolean(),
     productUrl: z.string().nullable(),
-    checkedAt: timestamp,
+    checkedAt: timestamp.describe("For reported offers: the day the newest report was seen in the store"),
   }),
   "Offer",
   "One chain's listing of an EAN.",
@@ -98,7 +99,10 @@ export const Item = register(
       .array(z.string())
       .nullable()
       .describe("kjott, gelatin, honning. null = not crawled; [] also covers products with no ingredient list"),
-    offers: z.array(Offer).describe("Cheapest first"),
+    offers: z.array(Offer).describe("Cheapest first. Empty for a product no chain we read sells, known from infoSource only"),
+    infoSource: z
+      .enum(["ngdata", "kassalapp", "openfoodfacts", "reported"])
+      .describe("Where title, picture and nutrition came from. openfoodfacts data is ODbL: credit Open Food Facts when you show it"),
   }),
   "Item",
   "One EAN with one offer per chain that sells it.",
@@ -167,7 +171,9 @@ export const Chain = register(
   z.object({
     key: z.string(),
     displayName: z.string(),
-    source: z.enum(["ngdata", "kassalapp"]).describe("Where prices come from: ngdata (the chain's own webshop search) or kassalapp (kassal.app, second-hand)"),
+    source: z
+      .enum(["ngdata", "kassalapp", "reported"])
+      .describe("Where prices come from: ngdata (the chain's own webshop search), kassalapp (kassal.app, second-hand) or reported (people's receipts and shelf prices, POST /prices)"),
     productCount: z.number().int(),
     lastCheckedAt: timestamp.nullable(),
   }),
@@ -207,10 +213,62 @@ export const Info = register(
 
 export const Health = register(z.object({ ok: z.literal(true) }), "Health");
 
+export const REPORT_MAX_ITEMS = 100;
+
+// GTIN-8/12/13/14 check digit: weights 3,1,3,1... from the right, excluding
+// the check digit itself. A mistyped code fails this before any lookup.
+export function validGtin(code: string): boolean {
+  if (![8, 12, 13, 14].includes(code.length)) return false;
+  const digits = [...code].map(Number);
+  const check = digits.pop()!;
+  const sum = digits.reverse().reduce((acc, d, i) => acc + d * (i % 2 === 0 ? 3 : 1), 0);
+  return (10 - (sum % 10)) % 10 === check;
+}
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+export const PriceReportRequest = register(
+  z.object({
+    reporter: z
+      .string()
+      .regex(/^[A-Za-z0-9_-]{16,128}$/)
+      .describe("Opaque, stable id for the person reporting, chosen by the client (e.g. an HMAC of its user id). Never a name or email"),
+    reports: z
+      .array(
+        z.object({
+          ean: z
+            .string()
+            .regex(/^[013-9]\d{7,13}$/)
+            .refine(validGtin, "check digit doesn't match")
+            .describe("8-14 digit barcode with a valid check digit. Codes starting with 2 (store weight and price stickers) are refused"),
+          chain: z.string().describe("Chain key from /chains"),
+          price: z.number().positive().max(100000).describe("Kroner for one package, after discounts"),
+          observedOn: z.string().regex(DATE).describe("YYYY-MM-DD, at most 90 days ago and not in the future"),
+          kind: z.enum(["receipt", "shelf"]),
+        }),
+      )
+      .min(1)
+      .max(REPORT_MAX_ITEMS),
+  }),
+  "PriceReportRequest",
+);
+
+export const PriceReportResponse = register(
+  z.object({
+    accepted: z.number().int(),
+    rejected: z
+      .array(z.object({ index: z.number().int(), reason: z.enum(["unknownChain", "unknownProduct", "tryAgain", "badDate"]) }))
+      .describe("Reports not stored, by position in the request. tryAgain: a lookup source didn't answer"),
+  }),
+  "PriceReportResponse",
+);
+
+export const DeleteReportsResponse = register(z.object({ deleted: z.number().int() }), "DeleteReportsResponse");
+
 export const ApiError = register(
   z.object({
     error: z.string(),
     invalid: z.array(z.unknown()).optional().describe("Lookup only: the values that failed validation"),
+    sourcesDown: z.array(z.string()).optional().describe("503 on /products/{ean} only: lookup sources that didn't answer"),
   }),
   "Error",
 );
@@ -218,4 +276,7 @@ export const ApiError = register(
 export type ItemT = z.infer<typeof Item>;
 export type OfferT = z.infer<typeof Offer>;
 export type ContentT = z.infer<typeof Content>;
+export type NutritionT = z.infer<typeof Nutrition>;
 export type ChangePageT = z.infer<typeof ChangePage>;
+export type PriceReportRequestT = z.infer<typeof PriceReportRequest>;
+export type PriceReportResponseT = z.infer<typeof PriceReportResponse>;

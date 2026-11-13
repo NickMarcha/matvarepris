@@ -1,10 +1,10 @@
 # MatvarePris API, version 1
 
-Contract version: 2
+Contract version: 3
 
-<!-- Checked against: 408a6b6bb74c -->
+<!-- Checked against: 5bd19163ede7 -->
 
-Answers: how does another program get grocery products, prices and nutrition (Meny, Spar and Joker first-hand, more chains via Kassalapp) out of this, and how does it keep up when they change?
+Answers: how does another program get grocery products, prices and nutrition (Meny, Spar and Joker first-hand, more chains via Kassalapp and from people's receipts) out of this, how does it keep up when they change, and how does a client app report prices it has seen?
 
 **This document is what `GET /api/v1/info` returns**, as `guide`, with the number above as `contractVersion`. A program keeps the number it was built against and re-reads this guide when the number moves. The number goes up when a change would matter to a caller: a field renamed or removed, a meaning changed, a status code changed, a new requirement. Prose fixes and new optional fields don't move it. Every bump gets a line under [Changes](#changes).
 
@@ -14,7 +14,9 @@ Base path: `/api/v1`. The unversioned `/api/*` routes belong to this project's o
 
 - Products come from NorgesGruppen's public search backend for three chains: `meny`, `spar` and `joker`. Kiwi has no webshop and isn't included. The catalog refreshes once a day, at 03:00 UTC, and again whenever the server restarts.
 - Right after each refresh, prices for the same EANs at other chains are fetched from [Kassalapp](https://kassal.app). As of November 2026 that adds `oda`, `bunnpris` and `europris`. Kassalapp also lists Kiwi, Rema and Coop, but stopped updating them in 2024, and prices older than 7 days are left out, so those chains show up only if Kassalapp starts updating them again. `GET /chains` says which source each chain comes from. Kassalapp offers only cover EANs the NorgesGruppen catalog already has (8-14 digits; the short item codes are NorgesGruppen's own), and they carry no offer or discount fields: `isOffer` is always false and `productUrl` is null.
-- Prices are chain-wide web prices, not a particular store's shelf price.
+- Prices for chains neither source covers (`kiwi`, `rema`, `extra`, `prix`, `mega`, `obs`, `coopmarked`) come from people: a client app with a key sends prices from receipts and shelves (`POST /prices`). The newest report from the last 60 days is that chain's offer. Older than that, the offer turns `inStock: false`. One person's receipt isn't the whole chain's price, and a chain can be days behind, so look at `checkedAt`. Reports for chains that already have a direct or Kassalapp price are kept but don't replace it.
+- Prices from ngdata and Kassalapp are chain-wide web prices, not a particular store's shelf price. Reported prices are one store's shelf price on one day.
+- Barcodes no chain we read sells (Coop's and Rema's own brands, imports) can still be known: when a client with a key asks for one, it is looked up on Kassalapp and then [Open Food Facts](https://openfoodfacts.org), and kept. Such an item has `offers: []` until someone reports a price. Open Food Facts data is under the ODbL: when you show an item with `infoSource: "openfoodfacts"`, credit Open Food Facts.
 - Nutrition, allergens and ingredients aren't in the bulk catalog. A background crawler reads them from each product page at about one page every 2-3 seconds, so a new install takes about half a day to fill them in. Until then most items have `nutrition: null`.
 - Diet flags come from a heuristic parser of Norwegian ingredient text. It is wrong sometimes. Don't use it for a real allergy. Allergens are the store's own legal declaration and are more trustworthy, but an allergen list can only be as complete as the crawl.
 
@@ -36,18 +38,19 @@ Everything is keyed by EAN (the barcode). One item is one EAN, with one offer pe
   "dietFlags": null,
   "offers": [
     {
-      "chain": "spar", "productId": 32718,
+      "chain": "spar", "source": "ngdata", "productId": 32718,
       "price": 38.9, "comparePricePerUnit": 38.9, "compareUnit": "kg",
       "isOffer": false, "originalPrice": null, "discountPercent": null, "promotionName": null,
       "inStock": true,
       "productUrl": "https://spar.no/varer/meieri-og-egg/melk/syrnet-melk-smakstilsatt/biola-syrnet-melk-7038010002274",
       "checkedAt": "2026-10-10T12:30:17.906Z"
     }
-  ]
+  ],
+  "infoSource": "ngdata"
 }
 ```
 
-- `offers` is sorted cheapest first. `price` is kroner for one package. `comparePricePerUnit` is kroner per `compareUnit` (`kg`, `l` or `stk`), the number the stores print as "kr/kg".
+- `offers` is sorted cheapest first. Each offer's `source` says where its price comes from: `ngdata`, `kassalapp` or `reported`. For a reported offer, `checkedAt` is the day the newest report was seen in the store. `price` is kroner for one package. `comparePricePerUnit` is kroner per `compareUnit` (`kg`, `l` or `stk`), the number the stores print as "kr/kg".
 - `content` is how much one package holds, in `compareUnit`. It is computed as `price / comparePricePerUnit` from the first offer that has both, because the store's own `weight` field is shipping mass, even for drinks. It's `null` when no offer has both numbers. For loose produce sold by weight it comes out as 1 kg, which means "priced per kg", not "a 1 kg bag".
 - `title`, `category` and the rest describe the chain whose nutrition was crawled most recently. Category names differ by chain ("Fisk & skalldyr", "Fisk og skalldyr", "Fisk/Skalldyr"), and this API doesn't merge them.
 - `nutrition` is `null` until the product page has been crawled. After that it holds per-100 g values, and any of them can still be `null` when the page didn't list it:
@@ -63,13 +66,16 @@ Everything is keyed by EAN (the barcode). One item is one EAN, with one offer pe
 
   `netCarbs` is carbs minus fiber, never below 0. The three `...Percent` fields are each macro's share of energy (4 kcal/g for protein and carbs, 9 for fat). They are `null` below 5 kcal per 100 g, because bulk candy and salad bars often carry placeholder values like 1 kcal.
 - `allergens` is the list of allergens the product contains, using these keys: `egg`, `fisk`, `gluten`, `melk`, `notter`, `peanotter`, `selleri`, `sennep`, `sesam`, `skalldyr`, `soya`, `sulfitt`, `blotdyr`, `lupiner`. `[]` means the store declares none. `null` means unknown.
+- `infoSource` says where the title, picture and nutrition came from: `ngdata` (a NorgesGruppen product page), `kassalapp` or `openfoodfacts` (the catalog, for products no NorgesGruppen chain sells), or `reported` when nothing better is known.
 - `dietFlags` holds what the ingredient parser found: `kjott` (meat), `gelatin`, `honning` (honey). `null` means the product page hasn't been crawled. `[]` means the parser found none of them, and that includes products whose page has no ingredient list at all, so `[]` alone doesn't prove a product is vegetarian.
 
 ## Endpoints
 
 ### `GET /api/v1/products/{ean}`
 
-One item. Optional `chain=meny,spar` limits the offers. Returns 404 when no chain sells that EAN, and 400 when it isn't 1-14 digits.
+One item. Optional `chain=meny,spar` limits the offers. Returns 400 when the EAN isn't 1-14 digits, and 404 when no chain sells it and the catalog doesn't know it.
+
+With a client key (`Authorization: Bearer <key>`), an 8-14 digit barcode nobody sells is looked up on Kassalapp and then Open Food Facts, and kept for 30 days (unknown codes for 7). When nothing was found and one of them didn't answer, the reply is 503 with `sourcesDown`, e.g. `["Open Food Facts"]`: the code may be fine, try again later. Without a key you get only what's already been looked up.
 
 ### `POST /api/v1/products/lookup`
 
@@ -83,7 +89,7 @@ Many items in one call, for a shopping list or a pantry.
 { "items": [ ... ], "missing": ["7350137710017"] }
 ```
 
-At most 200 EANs per call. Duplicates are ignored. `items` keeps the order you sent. An EAN lands in `missing` when none of the requested chains sell it. Bad input returns 400 with the offending values in `invalid`.
+At most 200 EANs per call. Duplicates are ignored. `items` keeps the order you sent. An EAN lands in `missing` when none of the requested chains sell it. Without `chains`, a barcode the catalog already knows comes back as an item with `offers: []` instead of in `missing`. This endpoint never looks anything up elsewhere. Bad input returns 400 with the offending values in `invalid`.
 
 ### `GET /api/v1/products`
 
@@ -114,7 +120,34 @@ Price history per chain: `{ ean, chains: [{ chain, productId, title, subtitle, c
 
 ### `GET /api/v1/chains`
 
-`[{ key, displayName, source, productCount, lastCheckedAt }]`. `source` is `ngdata` (the chain's own webshop search) or `kassalapp`. `lastCheckedAt` is the last time the catalog refresh saw any product from that chain.
+`[{ key, displayName, source, productCount, lastCheckedAt }]`. `source` is `ngdata` (the chain's own webshop search), `kassalapp` or `reported`. `lastCheckedAt` is the last time the catalog refresh saw any product from that chain, or for a reported chain, the newest report's date.
+
+### `POST /api/v1/prices` (client key)
+
+For apps that let people send prices they've seen. Needs `Authorization: Bearer <client key>`; keys are handed out by whoever runs the server (`REPORT_API_KEYS`).
+
+```json
+{
+  "reporter": "k3J9x2mQ7vLp0aZ8",
+  "reports": [
+    { "ean": "7020097009305", "chain": "extra", "price": 42.9, "observedOn": "2026-11-12", "kind": "receipt" }
+  ]
+}
+```
+
+```json
+{ "accepted": 1, "rejected": [] }
+```
+
+- `reporter` is a stable, opaque id for the person, 16-128 characters of `A-Z a-z 0-9 _ -`. Use something like an HMAC of your own user id. Never send a name or an email. It exists so that person's reports can be deleted later.
+- `price` is kroner for one package after discounts: a receipt line of 2 × 21,90 is reported as 21.9. `observedOn` is the day in the store, at most 90 days back. `kind` is `receipt` or `shelf`.
+- Barcodes are 8-14 digits. Codes starting with 2 are refused: they're the store's own weight and price stickers and mean nothing elsewhere.
+- Send the chain, never the store. Up to 100 reports per call.
+- `rejected` lists the reports that weren't stored, by position: `unknownChain`, `unknownProduct` (nobody knows the barcode), `badDate`, or `tryAgain` (a lookup source didn't answer).
+
+### `DELETE /api/v1/prices/reporters/{reporter}` (client key)
+
+Deletes everything one reporter sent through your key and rebuilds the offers those reports fed. Use it when someone stops sharing or deletes their account. Returns `{ deleted }`.
 
 ### `GET /api/v1/categories`
 
@@ -164,7 +197,7 @@ Response objects are open. A new optional field can appear without a version bum
 
 ## Errors and limits
 
-Errors are JSON, `{ "error": "..." }`, with a 4xx or 5xx status. The public deployment (`matvarepris.nickmarcha.com`) rate-limits by IP and answers 429 when you go over: about 10 requests a second with bursts to 40. There are no API keys for reading. On the same Docker network as the server, there are no limits.
+Errors are JSON, `{ "error": "..." }`, with a 4xx or 5xx status. The public deployment (`matvarepris.nickmarcha.com`) rate-limits by IP and answers 429 when you go over: about 10 requests a second with bursts to 40. There are no API keys for reading. Reporting prices and catalog lookups need a client key. On the same Docker network as the server, there are no limits.
 
 ## Admin endpoints
 
@@ -174,3 +207,4 @@ These are outside v1 and listed only so the 401 makes sense. `POST /api/ingest/r
 
 - **1** (2026-10-10). First version.
 - **2** (2026-11-13). Offers can now come from chains other than `meny`, `spar` and `joker` (`oda`, `bunnpris` and `europris` so far, via Kassalapp), so don't hard-code the chain list; read `GET /chains`. Chains gained `source`. Kassalapp offers have no promotion data and no product URL.
+- **3** (2026-11-13). Prices reported by people (`POST /prices`, client key) for Kiwi, Rema and the Coop chains. Offers gained `source`, items gained `infoSource`, chains can have `source: "reported"`. An item can now have `offers: []` (a barcode known only from the catalog), from `/products/{ean}` and `/products/lookup`. `/products/{ean}` can answer 503 with `sourcesDown` for a client with a key.

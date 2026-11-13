@@ -110,11 +110,12 @@ export function buildOpenApi(contractVersion: number) {
       title: "MatvarePris API",
       version: String(contractVersion),
       description:
-        "Meny, Spar and Joker products, prices and nutrition, keyed by EAN. " +
+        "Meny, Spar and Joker products, prices and nutrition, keyed by EAN, plus second-hand prices from " +
+        "Kassalapp and prices people report. " +
         "The full guide, with the meaning of nulls and the change-feed loop, is at /api/v1/info.",
     },
     servers: [{ url: "/api/v1" }],
-    // Reading needs no key.
+    // Reading needs no key. Reporting prices does (a client key from the operator).
     security: [],
     paths: withRateLimit({
       "/products": {
@@ -138,7 +139,8 @@ export function buildOpenApi(contractVersion: number) {
           responses: {
             200: json(ref("Item")),
             400: errorResponse("Not 1-14 digits"),
-            404: errorResponse("No chain sells this EAN"),
+            404: errorResponse("No chain sells this EAN and it isn't in the catalog"),
+            503: errorResponse("Looked up for a client, but a source didn't answer; sourcesDown lists them"),
           },
         },
       },
@@ -147,6 +149,32 @@ export function buildOpenApi(contractVersion: number) {
           operationId: "getProductHistory", summary: "Price history per chain",
           parameters: [eanPath, chainFilter],
           responses: { 200: json(ref("History")), 404: errorResponse("No chain sells this EAN") },
+        },
+      },
+      "/prices": {
+        post: {
+          operationId: "reportPrices", summary: "Report prices seen on receipts or shelves (client key)",
+          security: [{ clientKey: [] }],
+          requestBody: { required: true, content: { "application/json": { schema: ref("PriceReportRequest") } } },
+          responses: {
+            200: json(ref("PriceReportResponse")),
+            400: errorResponse("Bad body"),
+            401: errorResponse("No client key"),
+            403: errorResponse("Unknown client key"),
+          },
+        },
+      },
+      "/prices/reporters/{reporter}": {
+        delete: {
+          operationId: "deleteReporterPrices", summary: "Delete everything one reporter sent through this client (client key)",
+          security: [{ clientKey: [] }],
+          parameters: [{ name: "reporter", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            200: json(ref("DeleteReportsResponse")),
+            400: errorResponse("Bad reporter id"),
+            401: errorResponse("No client key"),
+            403: errorResponse("Unknown client key"),
+          },
         },
       },
       "/chains": {
@@ -174,6 +202,9 @@ export function buildOpenApi(contractVersion: number) {
       "/health": { get: { operationId: "getHealth", summary: "Process is up", responses: { 200: json(ref("Health")) } } },
       "/openapi.json": { get: { operationId: "getOpenApi", summary: "This document", responses: { 200: { description: "OpenAPI 3.1" } } } },
     }),
-    components: { schemas: componentSchemas() },
+    components: {
+      schemas: componentSchemas(),
+      securitySchemes: { clientKey: { type: "http", scheme: "bearer", description: "Client key from REPORT_API_KEYS" } },
+    },
   };
 }

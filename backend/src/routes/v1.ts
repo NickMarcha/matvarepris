@@ -3,15 +3,21 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Router } from "express";
 import { pool } from "../db/pool.js";
+import { cachedCatalog, lookupCatalog, SourcesDown, type CatalogProduct } from "../catalog/catalog.js";
+import { identifyClient, requireClient } from "../clientAuth.js";
+import { addReports, deleteReporter, REPORT_MAX_BACKDATE_DAYS } from "../reported/reported.js";
 import { eanHistoryHandler, queryGroupedProducts, toApiProduct } from "./products.js";
 import { buildOpenApi } from "./v1OpenApi.js";
 import {
   EAN_PATTERN,
   LOOKUP_MAX_EANS,
+  PriceReportRequest,
   type ChangePageT,
   type ContentT,
   type ItemT,
+  type NutritionT,
   type OfferT,
+  type PriceReportResponseT,
 } from "./v1Schemas.js";
 
 // The versioned API for other programs (docs/api.md is its contract). The
@@ -49,10 +55,21 @@ function representative(rows: any[]): any {
   })[0];
 }
 
-function toOffer(row: any): OfferT {
+type ChainSources = Map<string, string>;
+type OfferSource = OfferT["source"];
+
+// chains is a handful of rows; read it per request rather than caching, so a
+// chain the ingest just added is never missing.
+async function chainSources(): Promise<ChainSources> {
+  const result = await pool.query<{ key: string; source: string }>(`SELECT key, source FROM chains`);
+  return new Map(result.rows.map((r) => [r.key, r.source]));
+}
+
+function toOffer(row: any, sources: ChainSources): OfferT {
   const p = toApiProduct(row);
   return {
     chain: p.chain,
+    source: (sources.get(row.chain_key) ?? "ngdata") as OfferSource,
     productId: Number(p.id),
     price: p.price,
     comparePricePerUnit: p.comparePricePerUnit,
@@ -80,27 +97,88 @@ function contentOf(offers: OfferT[]): ContentT | null {
   return null;
 }
 
-function toItem(rows: any[]): ItemT {
+function catalogNutrition(c: CatalogProduct): NutritionT | null {
+  const n = c.nutrition;
+  if (!n) return null;
+  const kcal = n.kcal;
+  const share = (grams: number | null, perGram: number) =>
+    grams !== null && kcal !== null && kcal >= 5 ? Math.round(((grams * perGram) / kcal) * 1000) / 10 : null;
+  return {
+    energyKj: kcal !== null ? Math.round(kcal * 4.184) : null,
+    energyKcal: kcal,
+    fat: n.fat,
+    saturatedFat: n.saturatedFat,
+    monounsaturatedFat: null,
+    polyunsaturatedFat: null,
+    carbs: n.carbs,
+    netCarbs: n.carbs !== null ? Math.max(0, Math.round((n.carbs - (n.fiber ?? 0)) * 10) / 10) : null,
+    sugars: n.sugars,
+    sugarAlcohols: null,
+    starch: null,
+    fiber: n.fiber,
+    protein: n.protein,
+    salt: n.salt,
+    proteinPercent: share(n.protein, 4),
+    carbsPercent: share(n.carbs, 4),
+    fatPercent: share(n.fat, 9),
+    fetchedAt: c.fetchedAt,
+  };
+}
+
+function catalogContent(c: CatalogProduct | undefined): ContentT | null {
+  return c?.contentAmount && c.contentUnit ? { amount: c.contentAmount, unit: c.contentUnit } : null;
+}
+
+// A barcode no chain we read sells, known only from the catalog.
+function catalogItem(c: CatalogProduct): ItemT {
+  return {
+    ean: c.ean,
+    title: c.title,
+    subtitle: c.quantityText,
+    brand: c.brand,
+    category: null,
+    imageUrl: c.imageUrl,
+    content: catalogContent(c),
+    nutrition: catalogNutrition(c),
+    allergens: null,
+    dietFlags: null,
+    offers: [],
+    infoSource: c.source,
+  };
+}
+
+function toItem(rows: any[], sources: ChainSources, catalog: Map<string, CatalogProduct>): ItemT {
   const repRow = representative(rows);
   const rep = toApiProduct(repRow);
   const offers = rows
-    .map(toOffer)
+    .map((r) => toOffer(r, sources))
     .sort((a, b) => (a.price ?? Number.POSITIVE_INFINITY) - (b.price ?? Number.POSITIVE_INFINITY));
   const crawled = repRow.nutrition_fetched_at != null;
+  const fromStore = rows.some((r) => sources.get(r.chain_key) === "ngdata");
+  // Sold only at Kassalapp or reported chains: the catalog says more about
+  // what it is than those rows (which carry a title and a price).
+  const cat = fromStore ? undefined : catalog.get(rep.ean);
   return {
     ean: rep.ean,
     title: rep.title,
     subtitle: rep.subtitle,
-    brand: rep.brand,
+    brand: rep.brand ?? cat?.brand ?? null,
     category: rep.category,
-    imageUrl: rep.imageUrl,
-    content: contentOf(offers),
+    imageUrl: rep.imageUrl ?? cat?.imageUrl ?? null,
+    content: contentOf(offers) ?? catalogContent(cat),
     // null means not crawled yet, not "has none".
-    nutrition: crawled ? rep.nutrition : null,
+    nutrition: crawled ? rep.nutrition : cat ? catalogNutrition(cat) : null,
     allergens: (repRow.contains_allergens as string[] | null) ?? null,
     dietFlags: (repRow.contains_diet_flags as string[] | null) ?? null,
     offers,
+    infoSource: fromStore ? "ngdata" : (cat?.source ?? ((sources.get(repRow.chain_key) ?? "kassalapp") as ItemT["infoSource"])),
   };
+}
+
+// Catalog entries for the items that have no ngdata row.
+async function catalogFor(groups: any[][], sources: ChainSources): Promise<Map<string, CatalogProduct>> {
+  const eans = groups.filter((rows) => !rows.some((r) => sources.get(r.chain_key) === "ngdata")).map((rows) => rows[0].ean);
+  return cachedCatalog(eans);
 }
 
 async function rowsByEan(eans: string[], chains: string[]): Promise<Map<string, any[]>> {
@@ -153,11 +231,14 @@ router.get("/openapi.json", (_req, res) => {
 
 router.get("/products", async (req, res) => {
   const result = await queryGroupedProducts(req.query as Record<string, string | undefined>);
+  const sources = await chainSources();
+  const groups = result.rows.map((r) => r.members as any[]);
+  const catalog = await catalogFor(groups, sources);
   res.json({
     total: result.total,
     page: result.page,
     pageSize: result.pageSize,
-    items: result.rows.map((r) => toItem(r.members)),
+    items: groups.map((g) => toItem(g, sources, catalog)),
   });
 });
 
@@ -178,28 +259,96 @@ router.post("/products/lookup", async (req, res) => {
   }
 
   const unique = [...new Set(eans as string[])];
-  const byEan = await rowsByEan(unique, chainList(req.body?.chains));
-  res.json({
-    items: unique.filter((e) => byEan.has(e)).map((e) => toItem(byEan.get(e)!)),
-    missing: unique.filter((e) => !byEan.has(e)),
+  const chains = chainList(req.body?.chains);
+  const byEan = await rowsByEan(unique, chains);
+  const sources = await chainSources();
+  // Cached catalog entries only: a 200-code lookup must not turn into 200
+  // calls elsewhere. With a chain filter, offer-less items don't qualify.
+  const catalog = await cachedCatalog(chains.length > 0 ? [...byEan.keys()] : unique);
+  const items = unique.flatMap((e) => {
+    if (byEan.has(e)) return [toItem(byEan.get(e)!, sources, catalog)];
+    const c = catalog.get(e);
+    return c ? [catalogItem(c)] : [];
   });
+  const found = new Set(items.map((i) => i.ean));
+  res.json({ items, missing: unique.filter((e) => !found.has(e)) });
 });
 
-router.get("/products/:ean", async (req, res) => {
+router.get("/products/:ean", identifyClient, async (req, res) => {
   const { ean } = req.params;
   if (!EAN_PATTERN.test(ean)) {
     res.status(400).json({ error: "EAN must be 1-14 digits" });
     return;
   }
-  const rows = (await rowsByEan([ean], chainList(req.query.chain))).get(ean);
-  if (!rows) {
+  const chains = chainList(req.query.chain);
+  const rows = (await rowsByEan([ean], chains)).get(ean);
+  const sources = await chainSources();
+  if (rows) {
+    res.json(toItem(rows, sources, await catalogFor([rows], sources)));
+    return;
+  }
+  // Not sold by a chain we read. Clients with a key (they spend the shared
+  // Kassalapp budget) get it looked up; everyone gets what's cached. Real
+  // barcodes only: short codes are NorgesGruppen item numbers.
+  let c: CatalogProduct | null | undefined = null;
+  if (chains.length === 0 && /^\d{8,14}$/.test(ean)) {
+    if (res.locals.client) {
+      try {
+        c = await lookupCatalog(ean);
+      } catch (err) {
+        if (!(err instanceof SourcesDown)) throw err;
+        res.status(503).json({ error: err.message, sourcesDown: err.sources });
+        return;
+      }
+    } else {
+      c = (await cachedCatalog([ean])).get(ean);
+    }
+  }
+  if (!c) {
     res.status(404).json({ error: "No product with this EAN" });
     return;
   }
-  res.json(toItem(rows));
+  res.json(catalogItem(c));
 });
 
 router.get("/products/:ean/history", eanHistoryHandler);
+
+// Prices people saw, sent by a client app on their behalf (#124).
+router.post("/prices", requireClient, async (req, res) => {
+  const parsed = PriceReportRequest.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid price report", invalid: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) });
+    return;
+  }
+  const { reporter, reports } = parsed.data;
+  // Calendar days in Norway, where the shops are.
+  const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Oslo" });
+  const oldest = new Date(Date.parse(today) - REPORT_MAX_BACKDATE_DAYS * 86400_000).toISOString().slice(0, 10);
+  const badDate: PriceReportResponseT["rejected"] = [];
+  const valid = reports.flatMap((r, index) => {
+    if (Number.isNaN(Date.parse(r.observedOn)) || r.observedOn > today || r.observedOn < oldest) {
+      badDate.push({ index, reason: "badDate" });
+      return [];
+    }
+    return [{ ...r, index }];
+  });
+  const result = await addReports(res.locals.client, reporter, valid);
+  const body: PriceReportResponseT = {
+    accepted: result.accepted,
+    rejected: [...badDate, ...result.rejected.map((r) => ({ index: valid[r.index].index, reason: r.reason }))].sort(
+      (a, b) => a.index - b.index,
+    ),
+  };
+  res.json(body);
+});
+
+router.delete("/prices/reporters/:reporter", requireClient, async (req, res) => {
+  if (!/^[A-Za-z0-9_-]{16,128}$/.test(req.params.reporter)) {
+    res.status(400).json({ error: "Invalid reporter id" });
+    return;
+  }
+  res.json({ deleted: await deleteReporter(res.locals.client, req.params.reporter) });
+});
 
 // Cursor is "<txid>.<seq>"; see migration 0007 for why both parts are needed.
 const CURSOR_PATTERN = /^(\d+)\.(\d+)$/;

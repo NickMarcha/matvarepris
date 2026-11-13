@@ -7,7 +7,8 @@
 Personal full-stack tool for browsing/filtering NorgesGruppen grocery data
 (Meny, Spar, Joker) with better filtering than the official sites expose,
 plus price-history tracking. Prices for the same EANs at other chains (Oda,
-Bunnpris, Europris) come second-hand from Kassalapp's API. Node/TypeScript + Express backend, React/Vite
+Bunnpris, Europris) come second-hand from Kassalapp's API, and Kiwi, Rema and
+the Coop chains get prices people report through Susdi (#124). Node/TypeScript + Express backend, React/Vite
 frontend, Postgres, all run via Docker Compose.
 
 **Read `README.md` for the "why"** — API reverse-engineering notes, the
@@ -45,6 +46,9 @@ Frontend `:5173`, backend `:4000`, Postgres `:5432`. Copy `.env.example` to
 backend/src/
   chains.ts                 chain registry: ngdata CHAINS (meny/spar/joker; Kiwi excluded, no webshop) + KASSALAPP_STORES code->key map
   server.ts                 express app wiring, migration run, scheduler + nutrition crawler startup
+  clientAuth.ts             REPORT_API_KEYS ("name:key,..."): requireClient for POST/DELETE /v1/prices, identifyClient for catalog lookups
+  catalog/catalog.ts        barcodes no chain sells: Kassalapp GET /products/ean then Open Food Facts, cached in catalog_products (30 d found, 7 d missing); SourcesDown when nothing found and a source didn't answer
+  reported/reported.ts      reported prices: addReports, deleteReporter, refreshOffer (newest report <= 60 d -> products row), expireReported (runs after each ingest)
   db/
     pool.ts                 pg Pool, reads DATABASE_URL
     migrate.ts               migration runner, applies backend/src/db/migrations/*.sql in filename order
@@ -122,6 +126,19 @@ frontend/src/
   Re-fetched after 30 days.
 - **`price_history`** — append-only, one row only when something actually
   changed between ingest runs.
+- **`reported_prices`** — every price a client app reported (ean, chain,
+  package price, observed_on, kind receipt|shelf, client, opaque reporter
+  id). Never the store. For chains with `source = 'reported'` (kiwi, rema,
+  extra, prix, mega, obs, coopmarked) the newest report from the last 60 days
+  is written into `products` by `refreshOffer`, so search, history and
+  `/changes` treat it like any other offer; `last_checked_at` is the report's
+  date. Reports for ngdata/Kassalapp chains are stored but never touch
+  `products`. Deleting a reporter rebuilds the rows their reports fed and
+  deletes rows (with history) nobody else reported.
+- **`catalog_products`** — what a barcode is when no chain we read sells it,
+  from Kassalapp or Open Food Facts (ODbL, credit it). Looked up only for
+  callers with a client key (shared Kassalapp budget); public reads get the
+  cache. Fills in brand/picture/nutrition for items with no ngdata row.
 - **`schema_migrations`** — tracks applied migration filenames.
 
 Net carbs and the macro-%-of-energy fields (`proteinPercent`/etc.) are
@@ -193,7 +210,9 @@ Full param list is in README's "API" section. Backend: `GET /api/products`
 `/api/diet-classification/report` + `/reclassify` (POST).
 
 The two POSTs need `Authorization: Bearer $ADMIN_API_KEY` when that env var
-is set (`src/auth.ts`); unset, they're open, for local dev.
+is set (`src/auth.ts`); unset, they're open, for local dev. `POST /api/v1/prices`
+and `DELETE /api/v1/prices/reporters/:reporter` need a client key from
+`REPORT_API_KEYS` instead (`src/clientAuth.ts`); unset, nobody can report.
 
 **`/api/v1/*` is the contract for other programs** (the meal planner, anyone
 the API is shared with), documented in `backend/docs/api.md` and served by

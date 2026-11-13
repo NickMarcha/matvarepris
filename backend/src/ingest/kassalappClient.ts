@@ -43,6 +43,46 @@ async function waitForSlot(): Promise<void> {
   if (at > now) await sleep(at - now);
 }
 
+export interface KassalappProduct {
+  name: string | null;
+  brand: string | null;
+  vendor: string | null;
+  image: string | null;
+  weight: number | null;
+  weight_unit: string | null;
+}
+export interface KassalappNutrient {
+  code: string;
+  amount: number;
+}
+export interface KassalappComparison {
+  ean: string | null;
+  products: KassalappProduct[];
+  nutrition: KassalappNutrient[] | null;
+}
+
+export class KassalappUnavailable extends Error {}
+
+// GET /products/ean/{ean}: every store's listing of one barcode, for
+// identifying it (name, size, picture, nutrition). null = Kassalapp doesn't
+// know it. Shares the bulk calls' rate budget.
+export async function fetchProductByEan(apiKey: string, ean: string): Promise<KassalappComparison | null> {
+  await waitForSlot();
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/products/ean/${ean}`, {
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (err) {
+    throw new KassalappUnavailable(`Kassalapp unreachable: ${String(err)}`);
+  }
+  if (res.status === 404) return null;
+  if (!res.ok) throw new KassalappUnavailable(`Kassalapp answered ${res.status}`);
+  const body = (await res.json()) as { data?: KassalappComparison };
+  return body.data ?? null;
+}
+
 export async function fetchBulkPrices(apiKey: string, eans: string[], days: number): Promise<KassalappBulkItem[]> {
   for (let attempt = 0; ; attempt++) {
     await waitForSlot();

@@ -98,6 +98,12 @@ function statusCell(product: Product) {
   );
 }
 
+// Reported prices (Kiwi, Rema, Coop) can be weeks old; the badge says when
+// the price was last seen.
+function seenTitle(at: string | null): string | undefined {
+  return at ? `Pris sist sett ${new Date(at).toLocaleDateString("nb-NO")}` : undefined;
+}
+
 export function GroupedProductTable({
   groups,
   sort,
@@ -231,7 +237,7 @@ export function GroupedProductTable({
                   <td>
                     <div className="chain-badge-group">
                       {sortByChainOrder(group.members, (m) => m.chain).map((m) => (
-                        <span key={m.chain} className="chain-badge" style={chainColorStyle(m.chain)}>
+                        <span key={m.chain} className="chain-badge" style={chainColorStyle(m.chain)} title={seenTitle(m.lastCheckedAt)}>
                           {m.chain}
                         </span>
                       ))}
@@ -288,7 +294,7 @@ export function GroupedProductTable({
                       {discountCells(member)}
                       {showNutritionColumns && nutritionCells(member)}
                       <td>
-                        <span className="chain-badge" style={chainColorStyle(member.chain)}>
+                        <span className="chain-badge" style={chainColorStyle(member.chain)} title={seenTitle(member.lastCheckedAt)}>
                           {member.chain}
                         </span>
                       </td>

@@ -1,6 +1,7 @@
 import { CHAINS } from "../chains.js";
 import { ingestChain, type IngestSummary } from "./ingestChain.js";
 import { ingestKassalapp, kassalappEnabled } from "./kassalappIngest.js";
+import { expireReported } from "../reported/reported.js";
 
 let running = false;
 let lastRun: { startedAt: string; finishedAt: string; summaries: IngestSummary[] } | null = null;
@@ -37,6 +38,12 @@ export async function runAllChains(): Promise<IngestSummary[]> {
       }
     } else {
       console.log("[ingest] KASSALAPP_API_KEY not set, skipping kassalapp");
+    }
+    try {
+      const expired = await expireReported();
+      if (expired > 0) console.log(`[reported] ${expired} reported prices aged out`);
+    } catch (err) {
+      console.error("[reported] expiry failed:", err);
     }
   } finally {
     running = false;
