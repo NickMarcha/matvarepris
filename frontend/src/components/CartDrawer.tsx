@@ -37,7 +37,7 @@ function cheapest(entries: CartPricingEntry[]): CartPricingEntry | null {
 }
 
 // All non-empty subsets of a small array (chain count is always tiny — at
-// most a handful of NorgesGruppen chains), smallest subsets first so callers
+// most a handful of chains), smallest subsets first so callers
 // can stop at the first size that satisfies a coverage requirement.
 function nonEmptySubsets<T>(arr: T[]): T[][] {
   const result: T[][] = [];

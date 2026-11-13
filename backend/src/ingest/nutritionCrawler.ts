@@ -20,7 +20,8 @@ export interface NutritionCrawlStatus {
 
 export async function getNutritionCrawlStatus(): Promise<NutritionCrawlStatus> {
   const result = await pool.query<{ total: string; remaining: string }>(
-    `SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE nutrition_fetched_at IS NULL) AS remaining FROM products`,
+    `SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE nutrition_fetched_at IS NULL) AS remaining
+     FROM products WHERE chain_key IN (SELECT key FROM chains WHERE source = 'ngdata')`,
   );
   const totalProducts = Number(result.rows[0].total);
   const remaining = Number(result.rows[0].remaining);
@@ -37,7 +38,12 @@ async function runLoop(): Promise<void> {
     let handled = false;
     try {
       const next = await pool.query<{ id: number; chain_key: string; slugified_url: string | null }>(
-        `SELECT id, chain_key, slugified_url FROM products WHERE nutrition_fetched_at IS NULL ORDER BY id LIMIT 1`,
+        // Kassalapp rows have no product page. Stamping them as crawled would
+        // also make them win the per-EAN representative pick, which prefers
+        // the most recently crawled row.
+        `SELECT id, chain_key, slugified_url FROM products
+         WHERE nutrition_fetched_at IS NULL AND chain_key IN (SELECT key FROM chains WHERE source = 'ngdata')
+         ORDER BY id LIMIT 1`,
       );
 
       if (next.rows.length === 0) {

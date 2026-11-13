@@ -94,6 +94,7 @@ export interface Category {
 export interface Chain {
   key: string;
   displayName: string;
+  source: "ngdata" | "kassalapp";
   productCount: number;
   lastCheckedAt: string | null;
 }

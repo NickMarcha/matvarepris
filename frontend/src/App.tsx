@@ -86,7 +86,7 @@ export default function App() {
         <div>
           <h1>MatvarePris</h1>
           <div className="subtitle">
-            Bedre søk og filtrering for NorgesGruppen-kjedenes nettbutikkdata (Meny, Spar, Joker)
+            Bedre søk og filtrering for Meny, Spar og Joker, med priser fra Oda og Bunnpris via Kassalapp
           </div>
         </div>
         <div className="refresh-bar">

@@ -63,7 +63,7 @@ export const Nutrition = register(
 
 export const Offer = register(
   z.object({
-    chain: z.string().describe("meny, spar or joker"),
+    chain: z.string().describe("Chain key: meny, spar, joker (NorgesGruppen), or oda, bunnpris and others (Kassalapp); see /chains"),
     productId: z.number().int().describe("Internal, per chain. Store EANs, not this"),
     price: z.number().nullable().describe("Kroner for one package"),
     comparePricePerUnit: z.number().nullable().describe("Kroner per compareUnit"),
@@ -167,6 +167,7 @@ export const Chain = register(
   z.object({
     key: z.string(),
     displayName: z.string(),
+    source: z.enum(["ngdata", "kassalapp"]).describe("Where prices come from: ngdata (the chain's own webshop search) or kassalapp (kassal.app, second-hand)"),
     productCount: z.number().int(),
     lastCheckedAt: timestamp.nullable(),
   }),

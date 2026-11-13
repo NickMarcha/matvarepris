@@ -1,13 +1,15 @@
 import type { CSSProperties } from "react";
 
-// Brand colors per NorgesGruppen chain (see chains.ts on the backend for the
-// canonical key list). Primary = brand's dominant color, secondary = its
+// Brand colors per chain (see chains.ts on the backend for the canonical key
+// list; oda and bunnpris come from Kassalapp, picked by eye from their logos). Primary = brand's dominant color, secondary = its
 // accent/text color — e.g. Spar's real logo is a red disc with green text,
 // which is exactly primary/secondary here.
 export const CHAIN_COLORS: Record<string, { primary: string; secondary: string }> = {
   meny: { primary: "oklch(0.52 0.2 21.79)", secondary: "oklch(1 0 0)" },
   spar: { primary: "oklch(0.59 0.22 26.88)", secondary: "oklch(0.64 0.17 149.67)" },
   joker: { primary: "oklch(0.57 0.13 156.58)", secondary: "oklch(0.91 0.19 102.09)" },
+  oda: { primary: "oklch(0.68 0.17 10)", secondary: "oklch(1 0 0)" },
+  bunnpris: { primary: "oklch(0.55 0.21 27)", secondary: "oklch(0.9 0.17 95)" },
 };
 
 // Exposes the pair as CSS custom properties so a shared stylesheet rule (see
@@ -28,7 +30,7 @@ export function chainColorStyle(chainKey: string): CSSProperties {
 // array arrived in" (price order, DB scan order, Set insertion order, ...) —
 // those vary per row/response and read as visually random when several
 // badges sit side by side.
-const CHAIN_ORDER = ["joker", "meny", "spar"];
+const CHAIN_ORDER = ["joker", "meny", "spar", "bunnpris", "europris", "oda"];
 
 function chainSortIndex(chainKey: string): number {
   const idx = CHAIN_ORDER.indexOf(chainKey);

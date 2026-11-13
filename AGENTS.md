@@ -6,7 +6,8 @@
 
 Personal full-stack tool for browsing/filtering NorgesGruppen grocery data
 (Meny, Spar, Joker) with better filtering than the official sites expose,
-plus price-history tracking. Node/TypeScript + Express backend, React/Vite
+plus price-history tracking. Prices for the same EANs at other chains (Oda,
+Bunnpris, Europris) come second-hand from Kassalapp's API. Node/TypeScript + Express backend, React/Vite
 frontend, Postgres, all run via Docker Compose.
 
 **Read `README.md` for the "why"** — API reverse-engineering notes, the
@@ -42,7 +43,7 @@ Frontend `:5173`, backend `:4000`, Postgres `:5432`. Copy `.env.example` to
 
 ```
 backend/src/
-  chains.ts                 chain registry: key/chainId/displayName (meny/spar/joker; Kiwi excluded, no webshop)
+  chains.ts                 chain registry: ngdata CHAINS (meny/spar/joker; Kiwi excluded, no webshop) + KASSALAPP_STORES code->key map
   server.ts                 express app wiring, migration run, scheduler + nutrition crawler startup
   db/
     pool.ts                 pg Pool, reads DATABASE_URL
@@ -53,6 +54,8 @@ backend/src/
     ingestChain.ts            per-category paginated bulk ingest, UPSERT + price_history change-detection
     runAll.ts / runOnce.ts    ingest entrypoints (all chains / CLI single run)
     scheduler.ts               node-cron wrapper, reads CRON_SCHEDULE
+    kassalappClient.ts        POST /products/prices-bulk (100 EANs/call, spaced for the 60/min limit, 429 retry)
+    kassalappIngest.ts        runs after the ngdata chains in runAll: prices our 8-14 digit EANs at other chains, needs KASSALAPP_API_KEY
     productDetail.ts          on-demand scraper: pulls ingredients/allergens/nutrition/origin from a product's own page (RSC JSON blob)
     nutritionSync.ts          syncProductNutrition() — shared by the on-demand detail route AND the background crawler; also calls classifyDiet()
     nutritionCrawler.ts       slow sequential background crawler, backlog = products WHERE nutrition_fetched_at IS NULL
@@ -87,7 +90,17 @@ frontend/src/
 
 ## Data model (Postgres)
 
-- **`chains`** — static: key, chain_id, display_name.
+- **`chains`** — key, chain_id, display_name, `source` (`ngdata` | `kassalapp`).
+  ngdata rows are seeded by migration 0001; Kassalapp rows (chain_id NULL) are
+  inserted by the ingest the first time a store has a fresh price.
+- **Kassalapp rows in `products`** carry only title, price, compare price/unit
+  and availability: no nutrition, category, image or slug. The compare price
+  is computed from the package amount the ngdata row implies (price / kr per
+  unit), because Kassalapp's own unit price is wrong on Oda and missing on
+  Bunnpris. **Anything that crawls or scrapes product pages must filter to
+  `source = 'ngdata'`** (see `nutritionCrawler.ts`): stamping
+  `nutrition_fetched_at` on a Kassalapp row would make it the per-EAN
+  representative and blank out the item's nutrition.
 - **`products`** — one row per (chain_key, ean). Current snapshot only —
   price/stock/offer fields get overwritten on every ingest; `price_history`
   is where change-over-time lives. Columns of note:

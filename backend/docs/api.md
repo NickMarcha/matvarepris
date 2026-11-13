@@ -1,10 +1,10 @@
 # MatvarePris API, version 1
 
-Contract version: 1
+Contract version: 2
 
 <!-- Checked against: 408a6b6bb74c -->
 
-Answers: how does another program get Meny, Spar and Joker products, prices and nutrition out of this, and how does it keep up when they change?
+Answers: how does another program get grocery products, prices and nutrition (Meny, Spar and Joker first-hand, more chains via Kassalapp) out of this, and how does it keep up when they change?
 
 **This document is what `GET /api/v1/info` returns**, as `guide`, with the number above as `contractVersion`. A program keeps the number it was built against and re-reads this guide when the number moves. The number goes up when a change would matter to a caller: a field renamed or removed, a meaning changed, a status code changed, a new requirement. Prose fixes and new optional fields don't move it. Every bump gets a line under [Changes](#changes).
 
@@ -13,6 +13,7 @@ Base path: `/api/v1`. The unversioned `/api/*` routes belong to this project's o
 ## What the data is
 
 - Products come from NorgesGruppen's public search backend for three chains: `meny`, `spar` and `joker`. Kiwi has no webshop and isn't included. The catalog refreshes once a day, at 03:00 UTC, and again whenever the server restarts.
+- Right after each refresh, prices for the same EANs at other chains are fetched from [Kassalapp](https://kassal.app). As of November 2026 that adds `oda`, `bunnpris` and `europris`. Kassalapp also lists Kiwi, Rema and Coop, but stopped updating them in 2024, and prices older than 7 days are left out, so those chains show up only if Kassalapp starts updating them again. `GET /chains` says which source each chain comes from. Kassalapp offers only cover EANs the NorgesGruppen catalog already has (8-14 digits; the short item codes are NorgesGruppen's own), and they carry no offer or discount fields: `isOffer` is always false and `productUrl` is null.
 - Prices are chain-wide web prices, not a particular store's shelf price.
 - Nutrition, allergens and ingredients aren't in the bulk catalog. A background crawler reads them from each product page at about one page every 2-3 seconds, so a new install takes about half a day to fill them in. Until then most items have `nutrition: null`.
 - Diet flags come from a heuristic parser of Norwegian ingredient text. It is wrong sometimes. Don't use it for a real allergy. Allergens are the store's own legal declaration and are more trustworthy, but an allergen list can only be as complete as the crawl.
@@ -91,7 +92,7 @@ Search. Returns `{ total, page, pageSize, items }` with the same item shape as a
 | Parameter | Meaning |
 |---|---|
 | `search` | Substring of title, subtitle or brand |
-| `chain` | `meny,spar,joker`, any subset. Also limits each item's offers |
+| `chain` | Comma-separated chain keys from `GET /chains`. Also limits each item's offers |
 | `includeCategories`, `excludeCategories` | Comma-separated raw category names from `/categories` |
 | `minPrice`, `maxPrice`, `minUnitPrice`, `maxUnitPrice` | Kroner. True when at least one offer is in range |
 | `onOffer=true`, `inStock=true` | At least one offer is on sale or in stock |
@@ -113,7 +114,7 @@ Price history per chain: `{ ean, chains: [{ chain, productId, title, subtitle, c
 
 ### `GET /api/v1/chains`
 
-`[{ key, displayName, productCount, lastCheckedAt }]`. `lastCheckedAt` is the last time the catalog refresh saw any product from that chain.
+`[{ key, displayName, source, productCount, lastCheckedAt }]`. `source` is `ngdata` (the chain's own webshop search) or `kassalapp`. `lastCheckedAt` is the last time the catalog refresh saw any product from that chain.
 
 ### `GET /api/v1/categories`
 
@@ -172,3 +173,4 @@ These are outside v1 and listed only so the 401 makes sense. `POST /api/ingest/r
 ## Changes
 
 - **1** (2026-10-10). First version.
+- **2** (2026-11-13). Offers can now come from chains other than `meny`, `spar` and `joker` (`oda`, `bunnpris` and `europris` so far, via Kassalapp), so don't hard-code the chain list; read `GET /chains`. Chains gained `source`. Kassalapp offers have no promotion data and no product URL.
